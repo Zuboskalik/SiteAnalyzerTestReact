@@ -1,189 +1,160 @@
 /**
- * Vector math utilities: cosine similarity between embeddings and splitting
- * raw text into semantic chunks for per-chunk relevance analysis.
+ * @param {number[]} a
+ * @param {number[]} b
+ * @returns {number} Cosine similarity in [-1, 1]; 0 when either vector has zero magnitude.
  */
-
-/**
- * Computes the cosine similarity between two equal-length numeric vectors.
- * Returns a value in [-1, 1]; 1 means identical direction, 0 means orthogonal.
- * Returns 0 for a zero-magnitude vector (undefined direction) instead of NaN.
- *
- * @param {number[]} vectorA
- * @param {number[]} vectorB
- * @returns {number}
- */
-export function cosineSimilarity(vectorA, vectorB) {
-  if (!Array.isArray(vectorA) || !Array.isArray(vectorB)) {
-    throw new TypeError('cosineSimilarity: both arguments must be arrays')
-  }
-  if (vectorA.length !== vectorB.length) {
-    throw new Error('cosineSimilarity: vectors must have the same length')
+export function cosineSimilarity(a, b) {
+  if (a.length !== b.length) {
+    throw new Error(`cosineSimilarity: vector length mismatch (${a.length} vs ${b.length})`)
   }
 
-  let dotProduct = 0
-  let magnitudeA = 0
-  let magnitudeB = 0
-
-  for (let i = 0; i < vectorA.length; i++) {
-    dotProduct += vectorA[i] * vectorB[i]
-    magnitudeA += vectorA[i] * vectorA[i]
-    magnitudeB += vectorB[i] * vectorB[i]
+  let dot = 0
+  let normA = 0
+  let normB = 0
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i]
+    normA += a[i] * a[i]
+    normB += b[i] * b[i]
   }
 
-  if (magnitudeA === 0 || magnitudeB === 0) {
-    return 0
-  }
+  if (normA === 0 || normB === 0) return 0
 
-  return dotProduct / (Math.sqrt(magnitudeA) * Math.sqrt(magnitudeB))
+  // Clamp float drift so identical vectors report exactly 1.
+  return Math.max(-1, Math.min(1, dot / Math.sqrt(normA * normB)))
 }
 
-const DEFAULT_CHUNKING_OPTIONS = {
-  // Chunks longer than this (in characters) are split further at sentence boundaries.
-  maxChunkLength: 400,
-  // Sentence-level fragments shorter than this are merged into a neighboring chunk.
-  minChunkLength: 40,
+/** @param {number[]} vector */
+export function normalizeVector(vector) {
+  const norm = Math.hypot(...vector)
+  return norm === 0 ? vector.slice() : vector.map((v) => v / norm)
 }
 
-const BLANK_LINE_REGEX = /\n{2,}/g
-const SENTENCE_BOUNDARY_REGEX = /[.!?]+[")\]']?\s+/g
+/**
+ * Element-wise mean, used to aggregate chunk embeddings into a page-level vector.
+ * @param {number[][]} vectors
+ */
+export function meanVector(vectors) {
+  if (vectors.length === 0) throw new Error('meanVector: no vectors given')
+  const sum = new Array(vectors[0].length).fill(0)
+  for (const vector of vectors) {
+    for (let i = 0; i < sum.length; i++) sum[i] += vector[i]
+  }
+  return sum.map((v) => v / vectors.length)
+}
+
+const PARAGRAPH_BREAK = /\n\s*\n/g
+const SENTENCE_END = /[.!?…]+["'»)\]]*\s+/g
+const WHITESPACE = /\s/
 
 /**
- * Trims whitespace from a [start, end) span of `text` without changing the
- * substring's content, returning adjusted offsets that still satisfy
- * `text.slice(start, end) === text.slice(start, end).trim()`.
- * @param {string} text
- * @param {number} start
- * @param {number} end
- * @returns {{ start: number, end: number }}
+ * @typedef {{ start: number, end: number }} Span
  */
+
 function trimSpan(text, start, end) {
-  while (start < end && /\s/.test(text[start])) start++
-  while (end > start && /\s/.test(text[end - 1])) end--
+  while (start < end && WHITESPACE.test(text[start])) start++
+  while (end > start && WHITESPACE.test(text[end - 1])) end--
   return { start, end }
 }
 
-/**
- * Splits `text` into paragraph spans separated by one or more blank lines,
- * preserving exact character offsets into the original string.
- * @param {string} text
- * @returns {{ start: number, end: number }[]}
- */
-function splitIntoParagraphSpans(text) {
-  const spans = []
-  let cursor = 0
-  let match
+const spanLength = (span) => span.end - span.start
 
-  BLANK_LINE_REGEX.lastIndex = 0
-  while ((match = BLANK_LINE_REGEX.exec(text)) !== null) {
-    spans.push(trimSpan(text, cursor, match.index))
-    cursor = match.index + match[0].length
+function splitSpanAt(text, span, boundary) {
+  const pieces = []
+  let cursor = span.start
+  for (const match of text.slice(span.start, span.end).matchAll(boundary)) {
+    const cut = span.start + match.index + match[0].length
+    pieces.push(trimSpan(text, cursor, cut))
+    cursor = cut
   }
-  spans.push(trimSpan(text, cursor, text.length))
-
-  return spans.filter(({ start, end }) => end > start)
+  pieces.push(trimSpan(text, cursor, span.end))
+  return pieces.filter((piece) => spanLength(piece) > 0)
 }
 
-/**
- * Splits a single paragraph span into sentence-boundary spans, then greedily
- * regroups consecutive sentences into chunks close to `maxChunkLength`
- * without exceeding it (unless a single sentence is already longer).
- * @param {string} text
- * @param {{ start: number, end: number }} paragraphSpan
- * @param {{ maxChunkLength: number, minChunkLength: number }} options
- * @returns {{ start: number, end: number }[]}
- */
-function splitParagraphIntoChunkSpans(text, paragraphSpan, options) {
-  const { start: paragraphStart, end: paragraphEnd } = paragraphSpan
-  const paragraphText = text.slice(paragraphStart, paragraphEnd)
-
-  if (paragraphText.length <= options.maxChunkLength) {
-    return [paragraphSpan]
+/** Last-resort split of a single over-long sentence at whitespace. */
+function hardSplit(text, span, maxLength) {
+  const pieces = []
+  let start = span.start
+  while (span.end - start > maxLength) {
+    let cut = start + maxLength
+    while (cut > start && !WHITESPACE.test(text[cut])) cut--
+    if (cut === start) cut = start + maxLength
+    pieces.push(trimSpan(text, start, cut))
+    start = trimSpan(text, cut, span.end).start
   }
+  pieces.push(trimSpan(text, start, span.end))
+  return pieces.filter((piece) => spanLength(piece) > 0)
+}
 
-  // Locate sentence-ending boundaries within the paragraph, converting local
-  // match offsets back into absolute offsets into the original `text`.
-  const sentenceSpans = []
-  let cursor = paragraphStart
-  let match
-
-  SENTENCE_BOUNDARY_REGEX.lastIndex = 0
-  while ((match = SENTENCE_BOUNDARY_REGEX.exec(paragraphText)) !== null) {
-    const boundaryEnd = paragraphStart + match.index + match[0].length
-    sentenceSpans.push(trimSpan(text, cursor, boundaryEnd))
-    cursor = boundaryEnd
-  }
-  if (cursor < paragraphEnd) {
-    sentenceSpans.push(trimSpan(text, cursor, paragraphEnd))
-  }
-
-  // Greedily accumulate sentences into chunks, merging any trailing
-  // fragment shorter than minChunkLength into the previous chunk.
-  const chunkSpans = []
-  let groupStart = null
-  let groupEnd = null
-
-  for (const sentence of sentenceSpans) {
-    if (sentence.end <= sentence.start) continue
-
-    if (groupStart === null) {
-      groupStart = sentence.start
-      groupEnd = sentence.end
-      continue
-    }
-
-    const wouldBeLength = sentence.end - groupStart
-    if (wouldBeLength > options.maxChunkLength) {
-      chunkSpans.push({ start: groupStart, end: groupEnd })
-      groupStart = sentence.start
-      groupEnd = sentence.end
+function packSpans(spans, maxLength) {
+  const packed = []
+  for (const span of spans) {
+    const current = packed.at(-1)
+    if (current && span.end - current.start <= maxLength) {
+      current.end = span.end
     } else {
-      groupEnd = sentence.end
+      packed.push({ ...span })
     }
   }
-  if (groupStart !== null) {
-    chunkSpans.push({ start: groupStart, end: groupEnd })
-  }
+  return packed
+}
 
-  // Merge an undersized final chunk into its predecessor, when there is one.
-  if (chunkSpans.length > 1) {
-    const last = chunkSpans[chunkSpans.length - 1]
-    if (last.end - last.start < options.minChunkLength) {
-      chunkSpans.pop()
-      chunkSpans[chunkSpans.length - 1].end = last.end
-    }
-  }
-
-  return chunkSpans
+function splitLongSpan(text, span, maxLength) {
+  if (spanLength(span) <= maxLength) return [span]
+  const sentences = splitSpanAt(text, span, SENTENCE_END).flatMap((sentence) =>
+    spanLength(sentence) > maxLength ? hardSplit(text, sentence, maxLength) : [sentence],
+  )
+  return packSpans(sentences, maxLength)
 }
 
 /**
- * Splits raw text into semantic chunks for embedding/relevance analysis.
- * Chunking strategy: split on blank lines (paragraphs) first; any paragraph
- * longer than `maxChunkLength` is further split at sentence boundaries and
- * regrouped into chunks close to `maxChunkLength`. Every returned chunk
- * satisfies `text.slice(charStart, charEnd) === chunk.text`.
+ * Short spans (headings, one-liners, sentence leftovers) carry too little
+ * meaning to embed on their own, so each is folded into its neighbour:
+ * a heading joins the paragraph after it, a trailing leftover joins the one before.
+ */
+function mergeShortSpans(spans, minLength) {
+  const merged = []
+  for (const span of spans) {
+    const previous = merged.at(-1)
+    if (previous && spanLength(previous) < minLength) {
+      previous.end = span.end
+    } else {
+      merged.push({ ...span })
+    }
+  }
+  if (merged.length > 1 && spanLength(merged.at(-1)) < minLength) {
+    merged.at(-2).end = merged.pop().end
+  }
+  return merged
+}
+
+/**
+ * @typedef {Object} ChunkingOptions
+ * @property {number} [maxChunkLength=600] Paragraphs longer than this (chars) are split at sentence boundaries.
+ * @property {number} [minChunkLength=80]  Spans shorter than this are merged into a neighbour.
+ */
+
+/**
+ * Layout-based chunking: paragraphs (blank-line separated) are the primary
+ * unit; long paragraphs are split by sentences, short ones merged. Every chunk
+ * satisfies `text.slice(chunk.charStart, chunk.charEnd) === chunk.text`.
  *
  * @param {string} text
- * @param {{ maxChunkLength?: number, minChunkLength?: number }} [options]
+ * @param {ChunkingOptions} [options]
  * @returns {{ text: string, index: number, charStart: number, charEnd: number }[]}
  */
-export function chunkText(text, options = {}) {
-  if (typeof text !== 'string') {
-    throw new TypeError('chunkText: text must be a string')
+export function chunkText(text, { maxChunkLength = 600, minChunkLength = 80 } = {}) {
+  if (typeof text !== 'string') throw new TypeError('chunkText: text must be a string')
+  if (minChunkLength > maxChunkLength) {
+    throw new RangeError('chunkText: minChunkLength must not exceed maxChunkLength')
   }
 
-  const resolvedOptions = { ...DEFAULT_CHUNKING_OPTIONS, ...options }
-
-  if (text.trim().length === 0) {
-    return []
-  }
-
-  const paragraphSpans = splitIntoParagraphSpans(text)
-  const chunkSpans = paragraphSpans.flatMap((paragraphSpan) =>
-    splitParagraphIntoChunkSpans(text, paragraphSpan, resolvedOptions),
+  const paragraphs = splitSpanAt(text, { start: 0, end: text.length }, PARAGRAPH_BREAK)
+  const spans = mergeShortSpans(
+    paragraphs.flatMap((paragraph) => splitLongSpan(text, paragraph, maxChunkLength)),
+    minChunkLength,
   )
 
-  return chunkSpans.map(({ start, end }, index) => ({
+  return spans.map(({ start, end }, index) => ({
     text: text.slice(start, end),
     index,
     charStart: start,

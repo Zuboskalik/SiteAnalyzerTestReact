@@ -4,15 +4,25 @@
 
 Формат ID: `P<фаза>-<номер>`.
 
-## Отклонения от плана
+## Отклонения от плана (Phase 1–2)
 
-По ходу реализации Phase 1–2 фактические пути разошлись с `docs/plan.md`; зафиксировано здесь, чтобы последующие задачи (в т.ч. P1-5, P1-9, P2-2, P2-9 ниже) ссылались на актуальное состояние:
+Фактическая реализация расходится с `docs/plan.md` в следующих пунктах; последующие фазы должны опираться на этот список:
 
-- **TailwindCSS v4** настроен через `@tailwindcss/vite` (плагин в `vite.config.js` + `@import "tailwindcss";` в `src/index.css`) — отдельных `tailwind.config.js`/`postcss.config.js` в этой версии Tailwind не требуется (DoD задачи P1-2 в части конфигов формально устарел, суть — применение utility-классов — выполнена и проверена в браузере).
-- `cosineSimilarity` и `chunkText` реализованы в одном файле **`src/utils/vectorMath.js`** (по прямому указанию пользователя), а не в раздельных `src/services/similarity/cosineSimilarity.js` / `src/services/chunking/chunkText.js` из плана.
-- Демо-данные реализованы в **`src/mocks/semanticData.js`** (по прямому указанию пользователя), а не в `src/services/mockData/fixtures.js`. Текущий мок покрывает структуру Comparison Map (Target Keyword + `targetSite` + `competitorSites`, счётчики `getComparisonMapStats`) и 7-чанковую выборку по одной странице (`mockAnalyzedPage`) — это **не** полноценный объект `AnalysisResult` (нет `deepAnalysis`, чанков <10), поэтому P1-9/P1-10 ниже остаются открытыми до Phase 6.
-- Классификация зон релевантности (`classifyRelevanceZone`) пока реализована как приватный helper внутри `src/mocks/semanticData.js`, а не как переиспользуемый модуль — P2-2 остаётся открытым.
-- Тестовый раннер (Vitest и т.п.) ещё не подключён; корректность `cosineSimilarity`/`chunkText`/согласованность моков проверена вручную через одноразовые Node-скрипты (не закоммичены) — P2-9 остаётся открытым.
+- **React 19** (шаблон Vite) вместо React 18 из плана.
+- **TailwindCSS v4** подключён через `@tailwindcss/vite` (плагин в `vite.config.js` + `@import 'tailwindcss'` в `src/index.css`); файлы `tailwind.config.js` / `postcss.config.js` в v4 не нужны.
+- **Shadcn UI v4** (стиль `radix-nova`, `components.json`): вместо `clsx` + `tailwind-merge` используется пакет `cn` (shadcn-ui/cn), примитивы — из пакета `radix-ui`, шрифт Geist, тема — CSS-переменные в `src/index.css`. Алиас `@/*` → `src/*` (`jsconfig.json` + `vite.config.js`).
+- `cosineSimilarity` и `chunkText` (плюс `normalizeVector`, `meanVector`) — в одном модуле **`src/utils/vectorMath.js`** (по указанию пользователя) вместо `src/services/similarity/` и `src/services/chunking/`.
+- Демо-данные — **`src/mocks/semanticData.js`** (по указанию пользователя) вместо `src/services/mockData/fixtures.js`. Файл воспроизводит два эталона: видео (одностраничный анализ, `mockAnalysisResult`) и скриншот экрана Comparison (`mockComparisonMap`).
+- **Transformers.js**: `@huggingface/transformers` v4 (официальный преемник устаревшего `@xenova/transformers`), модель `onnx-community/all-MiniLM-L6-v2-ONNX`. Подгружается динамическим `import()` только при выборе режима, поэтому не попадает в основной бандл.
+- **Модель данных расширена** (`src/types/models.js`) под эталонный UI:
+  - `Chunk.label` / `heading` / `blockType` для столбцов Content Chunk и Type (Paragraph / H2);
+  - `AnalysisResult.sourceText` / `summary` (Avg Relevance, Overall Cohesion IDX, Optimization Needed);
+  - `PageVector.clusterId` для переключателя Color: Site / Cluster;
+  - `DeepAnalysis.toneAndReadability` и `suggestion.type` (`addition` / `structure` / `revision`);
+  - тип `ComparisonMap`.
+- **MockEmbeddingProvider** — детерминированный feature hashing (слова + символьные триграммы) с общей «тематической» осью, а не чистый рандом: в демо-режиме пользовательский текст получает осмысленный разброс по трём зонам.
+- `tetherThreshold` по умолчанию **0.75** (скриншот: «Tether ≥ 7.5» по шкале 0–10).
+- `npm audit`: 4 high-уязвимости в `onnxruntime-node` и `sharp` — это Node-only зависимости `@huggingface/transformers`, в браузерный бандл они не входят; исправления в upstream пока нет.
 
 ---
 
@@ -20,81 +30,107 @@
 
 - [x] **P1-1. Инициализация Vite + React проекта**
   DoD: `npm run dev` поднимает dev-server, в браузере отображается стартовая страница React без ошибок в консоли.
+  Проверено: страница открывается в Browser preview; `npm run build` собирается без ошибок.
 
 - [x] **P1-2. Установка и настройка TailwindCSS**
-  Файлы: `vite.config.js` (плагин `@tailwindcss/vite`), `src/index.css` (`@import "tailwindcss";`) — см. «Отклонения от плана».
-  DoD: Utility-классы Tailwind (например, `bg-slate-950`), применённые в `src/App.jsx`, визуально применяются в браузере (проверено через Browser preview).
+  Файлы: `vite.config.js` (`@tailwindcss/vite`), `src/index.css` — см. «Отклонения от плана» (Tailwind v4 без `tailwind.config.js`/`postcss.config.js`).
+  DoD: утилитарные классы Tailwind, применённые в `App.jsx`/`AppShell.jsx`, визуально применяются в браузере.
 
-- [ ] **P1-3. Установка и инициализация Shadcn UI**
-  DoD: `components.json` создан, хотя бы один сгенерированный примитив (`Button`) импортируется и рендерится в `App.jsx` без ошибок сборки.
+- [x] **P1-3. Установка и инициализация Shadcn UI**
+  DoD: `components.json` создан (`shadcn init`, Vite + Radix); сгенерированный `src/components/ui/button.jsx` рендерится в `App.jsx` (кнопка «Reload demo data»), сборка без ошибок.
 
-- [ ] **P1-4. Установка lucide-react**
-  DoD: Иконка из `lucide-react` импортируется и отображается в тестовом компоненте.
+- [x] **P1-4. Установка lucide-react**
+  DoD: иконки `Radar`, `RotateCcw`, `SlidersHorizontal` из `lucide-react` отображаются в `AppShell`/`App`.
 
-- [ ] **P1-5. Создание базовой структуры директорий проекта**
-  Файлы: `src/components/{config,visualizations,analysis,content,layout,ui}`, `src/services/{embeddings,chunking,similarity,mockData}`, `src/store`, `src/types`, `src/utils`.
-  DoD: Все директории из структуры плана (раздел 2 `docs/plan.md`) созданы; в каждой есть `.gitkeep` или заготовка файла, где применимо.
+- [x] **P1-5. Создание базовой структуры директорий проекта**
+  Файлы: `src/components/{config,visualizations,analysis,content,layout,ui}`, `src/services/embeddings`, `src/store`, `src/types`, `src/utils`, `src/mocks`, `src/lib`.
+  DoD: директории созданы; в ещё пустых лежит `.gitkeep`. Вместо `services/{chunking,similarity,mockData}` используются `src/utils/vectorMath.js` и `src/mocks/` — см. «Отклонения от плана».
 
-- [ ] **P1-6. Компонент `AppShell.jsx`**
+- [x] **P1-6. Компонент `AppShell.jsx`**
   Файлы: `src/components/layout/AppShell.jsx`.
-  DoD: Компонент рендерит общий каркас страницы (шапка, область настроек, основная область контента); подключён в `App.jsx` и виден в браузере при `npm run dev`.
+  DoD: каркас из шапки (логотип, название, бейдж текущего режима эмбеддингов), слота настроек (`settings`) и основной области; подключён в `App.jsx`, виден в браузере.
 
-- [ ] **P1-7. Установка Zustand и создание сторов-заготовок**
+- [x] **P1-7. Установка Zustand и создание сторов-заготовок**
   Файлы: `src/store/useAnalysisStore.js`, `src/store/useSettingsStore.js`.
-  DoD: Оба стора экспортируют хуки с начальным состоянием (`analysisResult: null`, `embeddingMode: 'mock'`, `tetherThreshold: 0.5` и т.д.); хук вызывается из тестового компонента без ошибок.
+  DoD: сторы с начальным состоянием: `analysisResult`, `status`, `stage`, `error`, `highlightedChunkId`, `embeddingMode: 'mock'`, `openaiApiKey: null`, `tetherThreshold: 0.75`, плюс экшены. Хуки используются в `App`/`AppShell` без ошибок.
 
-- [ ] **P1-8. Описание типов данных (JSDoc)**
+- [x] **P1-8. Описание типов данных (JSDoc)**
   Файлы: `src/types/models.js`.
-  DoD: В файле присутствуют все `@typedef` из раздела 3 `docs/plan.md` (`Chunk`, `PageVector`, `CompetitorSite`, `DeepAnalysis`, `AnalysisResult`, `AppSettings`); файл импортируется без синтаксических ошибок (проверка через IDE/JSDoc-линтер или `tsc --checkJs` при наличии конфигурации).
+  DoD: все `@typedef` из раздела 3 плана на месте и расширены полями эталонного UI (см. «Отклонения от плана»); файл импортируется без ошибок (проверено `node -e "import('./src/types/models.js')"`).
 
-- [ ] **P1-9. Mock-данные, соответствующие схеме `AnalysisResult`**
-  Файлы: `src/services/mockData/fixtures.js` → фактически частично реализовано в `src/mocks/semanticData.js` (см. «Отклонения от плана»).
-  DoD: Экспортируется хотя бы один полный объект `AnalysisResult` (≥10 чанков с разбросом `similarity` по всем трём зонам релевантности, ≥1 конкурент с ≥2 страницами, заполненный `deepAnalysis`); объект структурно соответствует JSDoc-типам из P1-8 (проверка вручную по полям).
-  Текущий статус: `src/mocks/semanticData.js` уже даёт `mockTargetKeyword`, `mockTargetSite` (13 страниц), `mockCompetitorSites` (1 конкурент, 14 страниц) и `mockAnalyzedPage` (7 чанков, все 3 зоны релевантности представлены, офсеты и similarity проверены вручную) — закрывает данные для Comparison Map (Phase 5) и частично для Relevance Dashboard/Proximity Map (Phase 4). Не хватает: ≥10 чанков и блока `deepAnalysis` для полного соответствия DoD — доделать при реализации Phase 6.
+- [x] **P1-9. Mock-данные, соответствующие схеме `AnalysisResult`**
+  Файлы: `src/mocks/semanticData.js`, тест `src/mocks/semanticData.test.js`.
+  DoD: экспортируется полный `AnalysisResult` (`mockAnalysisResult`):
+  - 12 чанков, по всем трём зонам: 3 / 7 / 2;
+  - 2 конкурента по 4 и 3 страницы;
+  - заполненный `deepAnalysis`.
 
-- [ ] **P1-10. Загрузка mock-данных в `useAnalysisStore` по умолчанию в demo-режиме**
-  DoD: При старте приложения с `embeddingMode: 'mock'` в `useAnalysisStore.analysisResult` автоматически подставляются данные из P1-9; в React DevTools видно заполненное состояние стора сразу после загрузки страницы.
+  Скоры чанков из видео воспроизведены: Intro 49%, Overview 54%, What does an accountant do? 61%, Best universities 44%, Conclusion 54%. Дополнительно — `mockComparisonMap` со скриншота: «Law Firm SEO», 29 + 44 = 73 страницы при Tether ≥ 7.5, best 8.1/10, кластеры для Color: Cluster. Эмбеддинги синтетические, но cosine similarity к ключу точно равна заявленным скорам (покрыто тестами).
+
+- [x] **P1-10. Загрузка mock-данных в `useAnalysisStore` по умолчанию в demo-режиме**
+  DoD: при `embeddingMode: 'mock'` стор стартует с `mockAnalysisResult`. Проверено через `useAnalysisStore.getState()` в браузере и по дашборду-обзору, который рендерится сразу после загрузки: Avg relevance 52.7%, Cohesion 58 IDX, 9 chunks to optimize.
 
 ---
 
 ## Phase 2 — Математический модуль (Chunking, Cosine Similarity, Embeddings Service)
 
 - [x] **P2-1. Утилита `cosineSimilarity`**
-  Файлы: `src/utils/vectorMath.js` (см. «Отклонения от плана» — объединена с `chunkText` по указанию пользователя).
-  DoD: Функция принимает два числовых массива одинаковой длины и возвращает число в диапазоне `[-1, 1]`; для идентичных векторов возвращает `1`, для ортогональных — `0`; при несовпадении длины бросает ошибку. Проверено вручную (Node-скрипт): identical=1, orthogonal=0, zero-vector=0, mismatched length → throw. Формальные unit-тесты — см. P2-9 (открыт).
+  Файлы: `src/utils/vectorMath.js` (см. «Отклонения от плана»).
+  DoD: принимает два массива одинаковой длины и возвращает значение в `[-1, 1]` (float-погрешность обрезается): для идентичных векторов `1`, для ортогональных `0`, для нулевого вектора `0`; при разной длине бросает ошибку. Покрыта тестами (P2-9).
 
-- [ ] **P2-2. Утилита классификации зон релевантности**
+- [x] **P2-2. Утилита классификации зон релевантности**
   Файлы: `src/utils/relevanceZones.js`.
-  DoD: Функция принимает `similarity` (0–1 или 0–100%) и возвращает `'highly_relevant' | 'broad_match' | 'noise'` строго по порогам из п. 3.4 спецификации (>65%, 43–64%, 0–42%); граничные значения (43%, 65%) проверены тестом.
-  Примечание: реализация уже существует как приватный helper `classifyRelevanceZone` в `src/mocks/semanticData.js` — требуется вынести в переиспользуемый `src/utils/relevanceZones.js`.
+  DoD: `classifyRelevanceZone(ratio)` принимает similarity как долю (0–1). Правила: >65% → `highly_relevant`, ≥43% → `broad_match`, иначе `noise`; дробные значения между опубликованными диапазонами уходят в нижнюю зону. Граничные 0.65, 0.651, 0.43 и 0.4299 проверены тестом.
 
 - [x] **P2-3. Утилита `chunkText`**
-  Файлы: `src/utils/vectorMath.js` (см. «Отклонения от плана»).
-  DoD: Функция принимает сырой текст и параметры стратегии (`maxChunkLength`, `minChunkLength`), возвращает массив объектов вида `{ text, index, charStart, charEnd }`, где `charStart`/`charEnd` корректно указывают на позицию фрагмента в исходной строке. Стратегия: разбиение по абзацам (пустая строка), с дроблением слишком длинных абзацев по границам предложений и укрупнением коротких хвостов. Проверено вручную (Node-скрипт) на многоабзацном тексте: все офсеты точны (`text.slice(charStart, charEnd) === chunk.text`), пустой текст → `[]`.
+  Файлы: `src/utils/vectorMath.js`.
+  DoD: layout-based стратегия с параметрами `maxChunkLength` (600) и `minChunkLength` (80):
+  - базовая единица — абзацы;
+  - длинные абзацы режутся по предложениям, а одно сверхдлинное предложение — по пробелам;
+  - короткие фрагменты (заголовки, хвосты) склеиваются с соседом.
 
-- [ ] **P2-4. Контракт `EmbeddingProvider`**
+  Возвращает `{ text, index, charStart, charEnd }`; инвариант `text.slice(charStart, charEnd) === chunk.text` проверен тестами, в том числе на CRLF и отступах.
+
+- [x] **P2-4. Контракт `EmbeddingProvider`**
   Файлы: `src/services/embeddings/EmbeddingProvider.js`.
-  DoD: Задокументирован единый интерфейс (JSDoc) с методом `embed(texts: string[]): Promise<number[][]>`; все последующие провайдеры (P2-5–P2-7) реализуют этот сигнатурный контракт.
+  DoD: JSDoc-контракт `{ id, label, embed(texts): Promise<number[][]> }` и фабрика `createEmbeddingProvider({ mode, openaiApiKey })`; все три провайдера его реализуют.
 
-- [ ] **P2-5. `MockEmbeddingProvider`**
+- [x] **P2-5. `MockEmbeddingProvider`**
   Файлы: `src/services/embeddings/mockEmbeddingProvider.js`.
-  DoD: Возвращает детерминированные псевдослучайные векторы фиксированной размерности; при одинаковом входном тексте всегда возвращает одинаковый вектор (проверка равенства при двух последовательных вызовах с одним текстом).
+  DoD: детерминированные единичные векторы размерности 256 (feature hashing, см. «Отклонения от плана»); одинаковый текст даёт одинаковый вектор (тест), тематически близкий текст оценивается выше постороннего (тест).
 
-- [ ] **P2-6. `TransformersEmbeddingProvider` (`@xenova/transformers`)**
+- [x] **P2-6. `TransformersEmbeddingProvider` (`@huggingface/transformers`)**
   Файлы: `src/services/embeddings/transformersEmbeddingProvider.js`.
   DoD: При вызове `embed(['test'])` в браузере (без сетевого ключа) модель загружается и возвращает числовой вектор ожидаемой размерности; повторный вызов после первой загрузки модели не вызывает повторную полную загрузку весов (проверка по логам/Network tab — используется кэш).
+  Проверено в Browser preview:
+  - `embed(['test'])` → вектор 384 с нормой 1.0000;
+  - повторный `embed` на 3 текста — 33 мс, новых сетевых запросов нет (extractor кэшируется на модель, веса — в Cache Storage браузера);
+  - similarity: близкий текст 0.458, посторонний 0.039.
+
+  Особенность dev-режима: при первом `import()` Vite один раз пре-бандлит `@huggingface/transformers` и перезагружает вкладку.
 
 - [ ] **P2-7. `OpenAIEmbeddingProvider` (`text-embedding-3-small`)**
   Файлы: `src/services/embeddings/openaiEmbeddingProvider.js`.
   DoD: При наличии валидного API-ключа (передаётся параметром, не хардкодится) запрос к OpenAI Embeddings API возвращает вектор; при отсутствии/невалидном ключе функция выбрасывает понятную ошибку, которая может быть поймана вызывающим кодом (не «тихий» сбой).
+  Статус: реализовано. На замоканном `fetch` проверены:
+  - формат запроса и порядок векторов;
+  - понятные ошибки для отсутствующего ключа, 401 и сетевого сбоя.
 
-- [ ] **P2-8. Оркестрация `analysisPipeline`**
+  Не проверено: живой запрос с реальным ключом (ключа нет) — это последний пункт DoD.
+
+- [x] **P2-8. Оркестрация `analysisPipeline`**
   Файлы: `src/services/analysisPipeline.js`.
-  DoD: Функция принимает входные параметры формы (текст/URL-текст, keyword, meta-поля, выбранный `EmbeddingProvider`) и возвращает объект, соответствующий типу `AnalysisResult`: текст разбит на чанки (P2-3), для keyword и каждого чанка вычислен embedding (через переданный provider) и `similarity` (P2-1), каждому чанку проставлена `relevanceZone` (P2-2).
+  DoD: `analyzeContent({ keyword, sourceText, inputSource, meta, competitors, provider, chunking, onStage })` собирает `AnalysisResult`:
+  - текст режется на чанки;
+  - keyword, чанки и страницы конкурентов эмбеддятся одним вызовом `provider.embed`;
+  - у каждого чанка есть `similarity`, `relevanceZone`, `label` / `heading` / `blockType`;
+  - считаются `summary`, `targetPage` и страницы конкурентов.
 
-- [ ] **P2-9. Unit-тесты математического модуля**
-  Файлы: тесты для `cosineSimilarity`, `relevanceZones`, `chunkText` (например, через Vitest).
-  DoD: `npm run test` (или аналог) проходит зелёным для всех тестов модуля; включены граничные случаи (нулевые векторы, пустой текст, точные пороги зон релевантности).
+  Стадии `chunking → embedding → scoring → aggregating` (шаги экрана «Computing Vectors») отдаются через `onStage`. Покрыто тестами.
+
+- [x] **P2-9. Unit-тесты математического модуля**
+  Файлы: `src/utils/vectorMath.test.js`, `src/utils/relevanceZones.test.js`, `src/services/embeddings/embeddingProviders.test.js`, `src/services/analysisPipeline.test.js`, `src/mocks/semanticData.test.js` (Vitest).
+  DoD: `npm test` — 57 тестов зелёные. Граничные случаи покрыты: нулевые векторы, пустой текст, точные пороги зон, CRLF, сверхдлинные предложения.
 
 ---
 

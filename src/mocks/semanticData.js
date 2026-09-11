@@ -1,281 +1,363 @@
 /**
- * Demo / mock data for the Semantic Relevance & Space Analyzer.
+ * Demo data mirroring the reference UI:
+ *  - `mockAnalysisResult`: single-page analysis from the reference video
+ *    (keyword "how to become an accountant in the uk"; Intro 49%, Overview 54%,
+ *    What does an accountant do 61%, Best universities 44%, Conclusion 54%),
+ *    extended to 12 chunks so all three relevance zones appear.
+ *  - `mockComparisonMap`: multi-site "Comparison" screen from the reference
+ *    screenshot (keyword "Law Firm SEO", 29 + 44 = 73 pages at Tether ≥ 7.5, best 8.1/10).
  *
- * Reproduces the data shape behind the Comparison Map visualization (Target
- * Keyword as a gold diamond, target-site and competitor-site pages as
- * colored points connected to the keyword by Tether lines whose strength is
- * the page's cosine similarity to the keyword, filterable by a Tether
- * threshold), together with a chunk-level breakdown of one representative
- * target page for the Relevance Dashboard / Proximity Map visualizations.
- *
- * Field names follow the PageVector / CompetitorSite / Chunk shapes
- * documented in docs/plan.md so this data can be swapped for a real
- * EmbeddingProvider-backed AnalysisResult later without reshaping consumers.
- *
- * The embeddings below are synthetic (no real embedding model involved):
- * each one is constructed so that `cosineSimilarity(embedding, keywordEmbedding)`
- * reproduces the curated similarity value it is paired with, using the
- * `cosineSimilarity` function from `src/utils/vectorMath.js` itself — so the
- * demo dataset is internally consistent with the app's own math module.
+ * Vectors are synthetic but built so that cosine similarity to the keyword
+ * equals the curated score exactly, so every chart agrees with the app's own math.
+ * Article copy and domains are original placeholders.
  */
-import { chunkText, cosineSimilarity } from '../utils/vectorMath'
+import { buildPageVector, scoreChunks, summarizeChunks } from '../services/analysisPipeline'
+import { chunkText, normalizeVector } from '../utils/vectorMath'
 
-const EMBEDDING_DIMENSIONS = 32
+const DIMENSIONS = 64
 
-/** Deterministic PRNG (mulberry32) so the demo dataset is stable across reloads. */
-function createRng(seedString) {
-  let seed = 0
-  for (let i = 0; i < seedString.length; i++) {
-    seed = (seed * 31 + seedString.charCodeAt(i)) >>> 0
-  }
-  return function rng() {
-    seed = (seed + 0x6d2b79f5) | 0
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+/** mulberry32 — deterministic, so the demo looks identical on every load. */
+function createRng(seed) {
+  let state = seed >>> 0
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = state
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
 }
 
-function normalize(vector) {
-  const magnitude = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0))
-  if (magnitude === 0) return vector
-  return vector.map((v) => v / magnitude)
-}
+const randomVector = (rng) => normalizeVector(Array.from({ length: DIMENSIONS }, () => rng() * 2 - 1))
 
-function randomUnitVector(dimensions, rng) {
-  const vector = Array.from({ length: dimensions }, () => rng() * 2 - 1)
-  return normalize(vector)
-}
-
-/**
- * Builds a unit embedding whose cosine similarity to `baseVector` is (up to
- * floating-point rounding) exactly `targetSimilarity`, by blending
- * `baseVector` with a random vector orthogonal to it.
- */
-function embeddingWithSimilarity(baseVector, targetSimilarity, rng) {
-  const random = randomUnitVector(baseVector.length, rng)
-  const projection = random.reduce((sum, v, i) => sum + v * baseVector[i], 0)
-  const orthogonal = normalize(
-    random.map((v, i) => v - projection * baseVector[i]),
-  )
-  const s = Math.max(-1, Math.min(1, targetSimilarity))
-  const orthogonalWeight = Math.sqrt(Math.max(0, 1 - s * s))
-  return baseVector.map((b, i) => s * b + orthogonalWeight * orthogonal[i])
-}
-
-/** Mirrors the Highly Relevant / Broad Match / Noise thresholds from docs/spec.md 3.4. */
-function classifyRelevanceZone(similarity) {
-  if (similarity > 0.65) return 'highly_relevant'
-  if (similarity >= 0.43) return 'broad_match'
-  return 'noise'
-}
-
-const rng = createRng('semantic-relevance-space-analyzer-demo')
-
-// ---------------------------------------------------------------------------
-// Target Keyword — rendered as the gold diamond at the center of the maps
-// ---------------------------------------------------------------------------
-
-const keywordEmbedding = randomUnitVector(EMBEDDING_DIMENSIONS, rng)
-
-export const mockTargetKeyword = {
-  id: 'keyword-personal-injury-lawyer',
-  label: 'personal injury lawyer',
-  embedding: keywordEmbedding,
-  meta: {
-    targetAudience:
-      'People seeking legal representation after an accident or injury',
-    contentPurpose: 'commercial',
-    websiteNiche: 'Personal injury / legal services',
-  },
-}
-
-/** Builds a PageVector-shaped mock entry with an internally-consistent embedding. */
-function buildPage({ id, url, label, type, competitorId = null, similarity }) {
-  const embedding = embeddingWithSimilarity(keywordEmbedding, similarity, rng)
-  const similarityToKeyword = cosineSimilarity(embedding, keywordEmbedding)
-  return {
-    id,
-    url,
-    label,
-    type,
-    competitorId,
-    embedding,
-    similarityToKeyword,
-    // 0-10 scale, matching the "Tether ≥ 7.5" / "best 8.1/10" display convention.
-    tetherScore: Math.round(similarityToKeyword * 1000) / 100,
-  }
+/** Unit vector at exactly `similarity` to the unit vector `anchor`, leaning toward `direction`. */
+function vectorWithSimilarity(anchor, similarity, direction) {
+  const projection = direction.reduce((sum, value, i) => sum + value * anchor[i], 0)
+  const orthogonal = normalizeVector(direction.map((value, i) => value - projection * anchor[i]))
+  const spread = Math.sqrt(1 - similarity ** 2)
+  return anchor.map((value, i) => similarity * value + spread * orthogonal[i])
 }
 
 // ---------------------------------------------------------------------------
-// Target site — the analyzed site's pages (green points on the Comparison Map)
+// Single-page analysis (reference video)
 // ---------------------------------------------------------------------------
 
-const TARGET_SITE_PAGES = [
-  ['What to Do After a Car Accident: Step-by-Step Guide', 0.88],
-  ['How Much Is My Personal Injury Claim Worth?', 0.84],
-  ['Free Consultation With a Personal Injury Lawyer', 0.81],
-  ['Slip and Fall Accident Claims Explained', 0.78],
-  ['Truck Accident Lawsuit Timeline', 0.74],
-  ['Motorcycle Accident Injury Attorney', 0.71],
-  ['Understanding Comparative Negligence Laws', 0.68],
-  ["Wrongful Death Claims: A Family's Guide", 0.63],
-  ['Medical Malpractice Lawsuit Process', 0.58],
-  ['Dog Bite Injury Compensation', 0.52],
-  ['Client Testimonials and Case Results', 0.39],
-  ['About Our Personal Injury Practice', 0.34],
-  ['Contact Our Injury Law Firm', 0.27],
-]
-
-export const mockTargetSite = {
-  id: 'site-target',
-  name: 'yourfirm.com',
-  url: 'https://yourfirm.com',
-  color: '#22c55e',
-  type: 'target',
-  pages: TARGET_SITE_PAGES.map(([label, similarity], i) =>
-    buildPage({
-      id: `target-page-${i + 1}`,
-      url: `https://yourfirm.com/${label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}`,
-      label,
-      type: 'target',
-      similarity,
-    }),
-  ),
+export const mockAnalysisFormDefaults = {
+  keyword: 'how to become an accountant in the uk',
+  sourceType: 'url',
+  url: 'https://careers.example.co.uk/careers-advice/how-to-become/accountant',
+  targetAudience: 'students looking to join career in accountancy',
+  contentPurpose: 'informative and commercial',
+  websiteNiche: 'third-party education website',
+  contentScope: 'complete_article',
+  vectorAlgorithm: 'layout_based',
 }
 
-// ---------------------------------------------------------------------------
-// Competitor site — a rival full-service firm (purple points on the map)
-// ---------------------------------------------------------------------------
-
-const COMPETITOR_PAGES = [
-  ['Personal Injury Attorneys You Can Trust', 0.86],
-  ['Car Accident Compensation Claims', 0.82],
-  ["Workplace Injury and Workers' Comp Lawyer", 0.76],
-  ['Bicycle Accident Injury Claims', 0.72],
-  ['Nursing Home Abuse Attorney', 0.69],
-  ['Product Liability Lawsuit Help', 0.65],
-  ['Insurance Claim Denial Appeals', 0.6],
-  ['Case Results', 0.44],
-  ['Divorce and Family Law Services', 0.41],
-  ['Our Attorneys', 0.37],
-  ['Criminal Defense Representation', 0.35],
-  ['Estate Planning and Wills', 0.31],
-  ['Business Litigation Attorneys', 0.29],
-  ['Contact Citywide Legal Group', 0.25],
-]
-
-export const mockCompetitorSites = [
+// One entry per chunk: every paragraph is 80–600 chars, so the default
+// layout-based chunkText() maps each section (heading + paragraph) to one chunk.
+const ARTICLE_SECTIONS = [
   {
-    id: 'competitor-citywide-legal',
-    name: 'Citywide Legal Group',
-    url: 'https://citywidelegalgroup.com',
-    color: '#6366f1',
-    pages: COMPETITOR_PAGES.map(([label, similarity], i) =>
-      buildPage({
-        id: `competitor-1-page-${i + 1}`,
-        url: `https://citywidelegalgroup.com/${label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}`,
+    heading: null,
+    similarity: 0.49,
+    text: 'Accountancy is one of the most flexible professional careers in Britain. Almost every organisation needs people who can keep its finances accurate, legal and useful for decision making, so qualified accountants can move between industries, sectors and even countries once they hold the right credentials.',
+  },
+  {
+    heading: 'Overview',
+    similarity: 0.54,
+    text: 'This guide covers what the job involves, the main routes into the profession, the qualifications recognised by UK employers and what you can expect to earn as your career develops. Use it to compare university, apprenticeship and school-leaver pathways before you commit to one.',
+  },
+  {
+    heading: 'What does an accountant do?',
+    similarity: 0.61,
+    text: "Accountants record financial transactions, prepare statements and tax returns, check that organisations follow reporting rules, and advise managers on budgets and investments. Day to day, that can mean auditing a client's books, forecasting cash flow for a start-up, or helping a charity report its spending transparently.",
+  },
+  {
+    heading: 'Routes into accountancy in the UK',
+    similarity: 0.78,
+    text: 'There are three common ways to become an accountant in the UK: study for a degree and then join a graduate training scheme, start an accountancy apprenticeship straight after A-levels, or qualify part-time while working in a finance role. All three lead to the same chartered qualifications; they differ in cost, pace and how early you start earning.',
+  },
+  {
+    heading: 'Professional qualifications: ACA, ACCA and CIMA',
+    similarity: 0.72,
+    text: 'To practise as a chartered accountant you will need a professional qualification. The ACA from ICAEW suits audit and advisory work, ACCA is recognised internationally and popular in industry, and CIMA focuses on management accounting inside businesses. Most trainees complete their exams over three to five years while employed.',
+  },
+  {
+    heading: 'Accountancy apprenticeships',
+    similarity: 0.68,
+    text: 'Apprenticeships let you train as an accountant in the UK without paying tuition fees. Employers cover your study costs while you earn a salary, progressing from assistant accountant level to a professional apprenticeship that includes chartered exams. Entry usually requires good GCSEs in maths and English plus A-levels or equivalent.',
+  },
+  {
+    heading: 'Best universities for accountancy courses',
+    similarity: 0.44,
+    text: 'League tables rank universities on teaching quality, graduate prospects and entry standards, so the best choice depends on what matters to you. Look for accredited degrees, which can exempt you from some professional exams, and check whether the course offers a placement year with a firm.',
+  },
+  {
+    heading: 'Skills employers look for',
+    similarity: 0.47,
+    text: 'Beyond being comfortable with numbers, recruiters value attention to detail, clear communication, commercial awareness and the ability to explain complex figures to people without a finance background. Familiarity with spreadsheets and accounting software is expected from day one.',
+  },
+  {
+    heading: 'Salary and career progression',
+    similarity: 0.52,
+    text: 'Trainees typically start on a modest salary that rises quickly once exams are passed. Newly qualified accountants can move into audit, tax, advisory, corporate finance or in-house finance teams, and experienced professionals often progress to financial controller, finance director or partner roles.',
+  },
+  {
+    heading: 'Student life and societies',
+    similarity: 0.31,
+    text: 'Many campuses have lively student unions with sports clubs, drama groups, volunteering projects and hundreds of societies. Getting involved is a great way to make friends, settle into a new city and balance the demands of your timetable.',
+  },
+  {
+    heading: 'About our careers service',
+    similarity: 0.22,
+    text: 'Our careers team publishes free guides on hundreds of jobs, runs virtual open days throughout the year and answers questions by email. Sign up to our newsletter to hear about new articles, events and competitions.',
+  },
+  {
+    heading: null,
+    similarity: 0.54,
+    text: 'The best route depends on how you prefer to learn and how soon you want to earn. Whichever path you choose, focus on gaining an accredited qualification, building relevant work experience and staying curious about how organisations use financial information.',
+  },
+]
+
+const ACCOUNTANT_COMPETITORS = [
+  {
+    id: 'competitor-grad-finance-hub',
+    name: 'Graduate Finance Hub',
+    url: 'https://gradfinancehub.example.com',
+    color: '#7c6fe0',
+    pages: [
+      ['How to become a chartered accountant', 0.8],
+      ['ACA vs ACCA vs CIMA compared', 0.71],
+      ['Accounting apprenticeships guide', 0.66],
+      ['Graduate schemes at the Big Four', 0.58],
+    ],
+  },
+  {
+    id: 'competitor-unicompare',
+    name: 'UniCompare',
+    url: 'https://unicompare.example.org',
+    color: '#f59e0b',
+    pages: [
+      ['Accounting and finance degrees', 0.57],
+      ['Top 10 universities for accounting', 0.49],
+      ['Student finance explained', 0.33],
+    ],
+  },
+]
+
+const slugify = (label) =>
+  label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+
+function buildAccountantAnalysis() {
+  const rng = createRng(20260911)
+  const keywordEmbedding = randomVector(rng)
+
+  const sourceText = ARTICLE_SECTIONS.map(({ heading, text }) => (heading ? `${heading}\n\n${text}` : text)).join(
+    '\n\n',
+  )
+  const rawChunks = chunkText(sourceText)
+  const chunks = scoreChunks(
+    rawChunks,
+    rawChunks.map((_, i) => vectorWithSimilarity(keywordEmbedding, ARTICLE_SECTIONS[i].similarity, randomVector(rng))),
+    keywordEmbedding,
+  )
+
+  const competitors = ACCOUNTANT_COMPETITORS.map((site) => ({
+    id: site.id,
+    name: site.name,
+    url: site.url,
+    color: site.color,
+    pages: site.pages.map(([label, similarity], i) =>
+      buildPageVector({
+        id: `${site.id}-page-${i + 1}`,
+        url: `${site.url}/${slugify(label)}`,
         label,
         type: 'competitor',
-        competitorId: 'competitor-citywide-legal',
-        similarity,
+        competitorId: site.id,
+        embeddings: [vectorWithSimilarity(keywordEmbedding, similarity, randomVector(rng))],
+        keywordEmbedding,
       }),
     ),
-  },
-]
+  }))
 
-// ---------------------------------------------------------------------------
-// Comparison Map UI defaults + derived stats (mirrors the reference
-// screenshot's "N pages ≥ threshold · best X/10" summary line)
-// ---------------------------------------------------------------------------
-
-export const mockComparisonMapSettings = {
-  tetherThreshold: 0.75,
-}
-
-export function getComparisonMapStats(
-  threshold = mockComparisonMapSettings.tetherThreshold,
-) {
-  const allPages = [
-    ...mockTargetSite.pages,
-    ...mockCompetitorSites.flatMap((site) => site.pages),
-  ]
-  const pagesAboveThreshold = allPages.filter(
-    (page) => page.similarityToKeyword >= threshold,
-  ).length
-  const bestSimilarity = allPages.reduce(
-    (max, page) => Math.max(max, page.similarityToKeyword),
-    0,
-  )
   return {
-    totalPages: allPages.length,
-    pagesAboveThreshold,
-    bestSimilarity,
-    bestTetherScore: Math.round(bestSimilarity * 1000) / 100,
+    id: 'mock-analysis-accountant-uk',
+    createdAt: '2026-09-11T12:00:00.000Z',
+    targetKeyword: mockAnalysisFormDefaults.keyword,
+    keywordEmbedding,
+    inputSource: { type: 'url', value: mockAnalysisFormDefaults.url },
+    meta: {
+      targetAudience: mockAnalysisFormDefaults.targetAudience,
+      contentPurpose: mockAnalysisFormDefaults.contentPurpose,
+      websiteNiche: mockAnalysisFormDefaults.websiteNiche,
+    },
+    sourceText,
+    chunks,
+    summary: summarizeChunks(chunks),
+    targetPage: buildPageVector({
+      id: 'target-page',
+      url: mockAnalysisFormDefaults.url,
+      label: 'How to become an accountant',
+      type: 'target',
+      chunkIds: chunks.map((chunk) => chunk.id),
+      embeddings: chunks.map((chunk) => chunk.embedding),
+      keywordEmbedding,
+    }),
+    competitors,
+    deepAnalysis: {
+      executiveSummary:
+        'The article outlines the main routes into accountancy but rarely ties them to concrete entry requirements: it never states the UCAS tariff points expected for degree routes, or how long each qualification path takes (the ACA, for example, usually runs three to five years). The recruitment journey stops at "apply to a firm" and skips the online psychometric tests and assessment centres most UK employers use. Coverage is also England-centric — ICAEW is named, while ICAS, essential for readers in Scotland, is missing.',
+      toneAndReadability:
+        'Friendly, informative tone that suits school leavers and first-year students (roughly a Grade 10–12 reading level). Long paragraphs would scan better as shorter sections, bullet lists and a comparison table.',
+      missingEntities: [
+        'ICAS (Institute of Chartered Accountants of Scotland)',
+        'UCAS tariff points',
+        'T-Levels in Finance',
+        'Numerical reasoning tests',
+        'Assessment centres',
+        'Situational judgement tests',
+        'Level 7 accountancy apprenticeship',
+        'L3/L4 assistant accountant apprenticeship',
+      ],
+      suggestions: [
+        {
+          id: 'suggestion-1',
+          type: 'addition',
+          priority: 'high',
+          title: 'Cover ICAS alongside ICAEW',
+          description:
+            'Add a short section on ICAS so the guide serves readers across the whole UK, not only England and Wales.',
+        },
+        {
+          id: 'suggestion-2',
+          type: 'structure',
+          priority: 'medium',
+          title: 'Add a qualification comparison table',
+          description:
+            'Map ACA, ACCA, CIMA, CIPFA and AAT to typical duration, entry requirements (UCAS points or apprenticeship level) and the career direction each one leads to.',
+        },
+        {
+          id: 'suggestion-3',
+          type: 'revision',
+          priority: 'medium',
+          title: 'Expand the recruitment process',
+          description:
+            'Describe the multi-stage application most UK firms run — online numerical and situational judgement tests, video interviews and assessment centres.',
+        },
+      ],
+    },
+    embeddingMode: 'mock',
   }
 }
 
+/** @type {import('../types/models').AnalysisResult} */
+export const mockAnalysisResult = buildAccountantAnalysis()
+
 // ---------------------------------------------------------------------------
-// Chunk-level breakdown of one target page, for the Relevance Dashboard /
-// Semantic Proximity Map. Each paragraph below is written to stay under the
-// default chunkText() maxChunkLength (400 chars), so chunking is 1:1 with
-// paragraphs and lines up with the curated PARAGRAPH_SIMILARITIES below.
+// Multi-site Comparison Map (reference screenshot)
 // ---------------------------------------------------------------------------
 
-const ANALYZED_PAGE_TEXT = `Being involved in a car accident is disorienting, but the steps you take in the first few minutes can significantly affect your health, your insurance claim, and any personal injury case you may later file. This guide walks through what to do, in order.
+const LAW_FIRM_CLUSTERS = [
+  {
+    id: 'cluster-practice-areas',
+    label: 'Practice area pages',
+    color: '#f97316',
+    topics: ['Personal injury lawyer SEO', 'Family law SEO', 'Criminal defense SEO', 'Estate planning SEO', 'Immigration lawyer SEO'],
+  },
+  {
+    id: 'cluster-local-seo',
+    label: 'Local SEO',
+    color: '#0ea5e9',
+    topics: ['Google Business Profile for law firms', 'Local citations for attorneys', 'Lawyer reviews strategy', 'Map pack rankings for lawyers', 'City landing pages for law firms'],
+  },
+  {
+    id: 'cluster-content',
+    label: 'Legal content marketing',
+    color: '#a855f7',
+    topics: ['Legal blog topics', 'Attorney FAQ pages', 'Case result pages', 'Legal video marketing', 'Law firm content calendar'],
+  },
+  {
+    id: 'cluster-links',
+    label: 'Link building',
+    color: '#ef4444',
+    topics: ['Link building for law firms', 'Legal directory backlinks', 'Digital PR for attorneys', 'Guest posting for lawyers', 'Scholarship link campaigns'],
+  },
+  {
+    id: 'cluster-technical',
+    label: 'Technical SEO',
+    color: '#14b8a6',
+    topics: ['Law firm site speed', 'Schema markup for attorneys', 'Law firm website migration', 'Core Web Vitals for legal sites', 'Crawl budget for large law sites'],
+  },
+]
 
-First, check yourself and any passengers for injuries and call 911 if anyone needs medical attention. Move vehicles out of traffic only if it is safe to do so. Never admit fault at the scene, even casually, since statements can be used against you later.
+const PAGE_ANGLES = ['guide', 'checklist', 'case study', 'pricing', 'for small firms', 'mistakes to avoid', 'in 2026', 'services']
 
-Document everything you can: photograph vehicle damage, license plates, road conditions, and any visible injuries. Collect contact information from witnesses and the other driver. This evidence often determines how an insurance adjuster values your claim.
+const LAW_FIRM_SITES = [
+  {
+    id: 'site-target',
+    role: 'target',
+    name: 'yourfirm-seo.example.com',
+    url: 'https://yourfirm-seo.example.com',
+    color: '#5cbf8a',
+    pagesAboveThreshold: 29,
+    pagesBelowThreshold: 7,
+  },
+  {
+    id: 'site-competitor-1',
+    role: 'competitor',
+    name: 'legalrank.example.com',
+    url: 'https://legalrank.example.com',
+    color: '#7b7be5',
+    pagesAboveThreshold: 44,
+    pagesBelowThreshold: 11,
+  },
+]
 
-If you were injured, or if fault is disputed, it is worth a free consultation with a personal injury lawyer before speaking to the other driver's insurance company. An attorney can flag lowball offers and missed deadlines early.
+const COMPARISON_TETHER_THRESHOLD = 0.75
+const COMPARISON_BEST_SIMILARITY = 0.81
 
-Our firm was founded in 1998 by a former paralegal who wanted a more client-first practice. Today our office hosts a monthly community legal-aid clinic and sponsors a local youth soccer league, alongside our personal injury caseload.
+function buildLawFirmComparison() {
+  const rng = createRng(7_500_810)
+  const keywordEmbedding = randomVector(rng)
+  const clusterDirections = new Map(LAW_FIRM_CLUSTERS.map((cluster) => [cluster.id, randomVector(rng)]))
 
-Insurance companies often use recorded statements, fast settlement offers, and surveillance to minimize payouts. Understanding these tactics before you interact with an adjuster can prevent you from accidentally undermining your own claim.
+  const sites = LAW_FIRM_SITES.map((site, siteIndex) => {
+    const similarities = [
+      ...Array.from({ length: site.pagesAboveThreshold }, () => 0.752 + rng() * 0.05),
+      ...Array.from({ length: site.pagesBelowThreshold }, () => 0.5 + rng() * 0.24),
+    ]
+    // The single best page ("best 8.1/10") belongs to the competitor.
+    if (site.role === 'competitor') similarities[0] = COMPARISON_BEST_SIMILARITY
 
-If you have been in a car accident, keep this checklist handy and reach out for a free case review. Acting quickly preserves evidence and protects your right to full compensation for medical bills and lost wages.`
+    const pages = similarities.map((similarity, i) => {
+      const cluster = LAW_FIRM_CLUSTERS[Math.floor(rng() * LAW_FIRM_CLUSTERS.length)]
+      const topic = cluster.topics[(i + siteIndex) % cluster.topics.length]
+      const label = `${topic} ${PAGE_ANGLES[i % PAGE_ANGLES.length]}`
+      const direction = clusterDirections.get(cluster.id).map((value) => value + (rng() * 2 - 1) * 0.5)
+      return buildPageVector({
+        id: `${site.id}-page-${i + 1}`,
+        url: `${site.url}/${slugify(label)}-${i + 1}`,
+        label,
+        type: site.role,
+        competitorId: site.role === 'competitor' ? site.id : null,
+        clusterId: cluster.id,
+        embeddings: [vectorWithSimilarity(keywordEmbedding, similarity, direction)],
+        keywordEmbedding,
+      })
+    })
 
-// One curated similarity per paragraph above, in order — deliberately includes
-// an off-topic "firm history" tangent (paragraph 5) to demonstrate the Noise
-// zone alongside Highly Relevant and Broad Match chunks.
-const PARAGRAPH_SIMILARITIES = [0.87, 0.83, 0.79, 0.74, 0.28, 0.55, 0.63]
-
-function buildAnalyzedPageChunks() {
-  const rawChunks = chunkText(ANALYZED_PAGE_TEXT)
-  return rawChunks.map((chunk, i) => {
-    const targetSimilarity = PARAGRAPH_SIMILARITIES[i] ?? 0.5
-    const embedding = embeddingWithSimilarity(keywordEmbedding, targetSimilarity, rng)
-    const similarity = cosineSimilarity(embedding, keywordEmbedding)
-    return {
-      id: `analyzed-page-chunk-${i + 1}`,
-      text: chunk.text,
-      index: chunk.index,
-      charStart: chunk.charStart,
-      charEnd: chunk.charEnd,
-      embedding,
-      similarity,
-      relevanceZone: classifyRelevanceZone(similarity),
-    }
+    return { id: site.id, role: site.role, name: site.name, url: site.url, color: site.color, pages }
   })
+
+  return {
+    keyword: { id: 'keyword-law-firm-seo', text: 'Law Firm SEO', embedding: keywordEmbedding },
+    sites,
+    clusters: LAW_FIRM_CLUSTERS.map(({ id, label, color }) => ({ id, label, color })),
+    settings: { tetherThreshold: COMPARISON_TETHER_THRESHOLD, gapLimit: 5, showKeywords: true, colorBy: 'site' },
+  }
 }
 
-export const mockAnalyzedPage = {
-  id: 'target-page-1',
-  url: mockTargetSite.pages[0].url,
-  label: mockTargetSite.pages[0].label,
-  text: ANALYZED_PAGE_TEXT,
-  chunks: buildAnalyzedPageChunks(),
-}
-
-// ---------------------------------------------------------------------------
-// Single convenience export bundling everything above
-// ---------------------------------------------------------------------------
-
-export const mockSemanticData = {
-  targetKeyword: mockTargetKeyword,
-  targetSite: mockTargetSite,
-  competitorSites: mockCompetitorSites,
-  comparisonMapSettings: mockComparisonMapSettings,
-  analyzedPage: mockAnalyzedPage,
-}
+/** @type {import('../types/models').ComparisonMap} */
+export const mockComparisonMap = buildLawFirmComparison()
