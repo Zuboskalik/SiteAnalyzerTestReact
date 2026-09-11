@@ -22,7 +22,7 @@ const ZONE_BANDS = [
 export function ProximityRadar() {
   const result = useAnalysisStore((state) => state.analysisResult)
   const highlightedChunkId = useAnalysisStore((state) => state.highlightedChunkId)
-  const setHighlightedChunkId = useAnalysisStore((state) => state.setHighlightedChunkId)
+  const toggleHighlightedChunkId = useAnalysisStore((state) => state.toggleHighlightedChunkId)
   const containerRef = useRef(null)
   const [tooltip, setTooltip] = useState(null)
 
@@ -36,11 +36,16 @@ export function ProximityRadar() {
     return result.chunks.map((chunk, i) => ({ chunk, x: CENTER + layout[i].x, y: CENTER + layout[i].y }))
   }, [result])
 
-  if (!result) return null
+  if (!result) {
+    return (
+      <section className="rounded-xl border bg-white p-10 text-center text-sm text-muted-foreground">
+        No analysis data available. Run an analysis to see the proximity map.
+      </section>
+    )
+  }
 
   const keywordLabel =
     result.targetKeyword.length > 30 ? `${result.targetKeyword.slice(0, 29).trimEnd()}…` : result.targetKeyword
-  const toggle = (chunkId) => setHighlightedChunkId(highlightedChunkId === chunkId ? null : chunkId)
 
   return (
     <section className="rounded-xl border bg-white p-6 shadow-xs" aria-labelledby="radar-title">
@@ -118,11 +123,11 @@ export function ProximityRadar() {
                 aria-label={`${chunk.label}: ${Math.round(chunk.similarity * 100)}%, ${zone.label}`}
                 aria-pressed={selected}
                 className="cursor-pointer outline-none [&:focus-visible>.focus-ring]:opacity-100"
-                onClick={() => toggle(chunk.id)}
+                onClick={() => toggleHighlightedChunkId(chunk.id)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault()
-                    toggle(chunk.id)
+                    toggleHighlightedChunkId(chunk.id)
                   }
                 }}
                 onMouseMove={(event) => setTooltip({ chunk, ...pointerPosition(containerRef.current, event) })}

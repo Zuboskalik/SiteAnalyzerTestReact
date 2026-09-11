@@ -23,7 +23,7 @@ export const useAnalysisStore = create((set) => ({
    */
   runAnalysis: async (request) => {
     const { embeddingMode, openaiApiKey } = useSettingsStore.getState()
-    set({ status: 'running', stage: null, error: null })
+    set({ status: 'running', stage: null, error: null, highlightedChunkId: null })
     try {
       const analysisResult = await runAnalysisRequest(request, {
         mode: embeddingMode,
@@ -32,9 +32,13 @@ export const useAnalysisStore = create((set) => ({
       })
       set({ analysisResult, status: 'success', stage: null, highlightedChunkId: null })
     } catch (error) {
-      set({ status: 'error', stage: null, error })
+      set({ status: 'error', stage: null, error, highlightedChunkId: null })
     }
   },
   setResult: (analysisResult) => set({ analysisResult, status: 'success', stage: null, highlightedChunkId: null }),
   setHighlightedChunkId: (highlightedChunkId) => set({ highlightedChunkId }),
+  toggleHighlightedChunkId: (chunkId) =>
+    set((state) => ({
+      highlightedChunkId: state.highlightedChunkId === chunkId ? null : chunkId,
+    })),
 }))

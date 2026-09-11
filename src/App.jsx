@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button'
 import { ComparisonVectorMap } from '@/components/visualizations/ComparisonVectorMap'
 import { ProximityRadar } from '@/components/visualizations/ProximityRadar'
 import { RelevanceChart } from '@/components/visualizations/RelevanceChart'
+import { DeepAnalysisCards } from '@/components/analysis/DeepAnalysisCards'
+import { SourceTextPanel } from '@/components/content/SourceTextPanel'
 import { mockAnalysisResult } from '@/mocks/semanticData'
 import { useAnalysisStore } from '@/store/useAnalysisStore'
 import { RELEVANCE_ZONES } from '@/utils/relevanceZones'
@@ -117,6 +119,8 @@ function App() {
           <RelevanceChart />
         </div>
         <ComparisonVectorMap />
+        <DeepAnalysisCards deepAnalysis={analysisResult.deepAnalysis} />
+        <SourceTextPanel chunks={analysisResult.chunks} sourceText={analysisResult.sourceText} />
       </>
     )
   } else {

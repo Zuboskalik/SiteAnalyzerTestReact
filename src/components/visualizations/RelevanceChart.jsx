@@ -52,7 +52,7 @@ function ChartTooltip({ active, payload }) {
 export function RelevanceChart() {
   const result = useAnalysisStore((state) => state.analysisResult)
   const highlightedChunkId = useAnalysisStore((state) => state.highlightedChunkId)
-  const setHighlightedChunkId = useAnalysisStore((state) => state.setHighlightedChunkId)
+  const toggleHighlightedChunkId = useAnalysisStore((state) => state.toggleHighlightedChunkId)
 
   const data = useMemo(
     () =>
@@ -64,12 +64,18 @@ export function RelevanceChart() {
     [result],
   )
 
-  if (!result) return null
+  if (!result) {
+    return (
+      <section className="rounded-xl border bg-white p-10 text-center text-sm text-muted-foreground">
+        No analysis data available. Run an analysis to see the relevance dashboard.
+      </section>
+    )
+  }
 
   function handleClick(state) {
     const index = state?.activeTooltipIndex
     const chunk = index == null ? null : data[Number(index)]?.chunk
-    if (chunk) setHighlightedChunkId(highlightedChunkId === chunk.id ? null : chunk.id)
+    if (chunk) toggleHighlightedChunkId(chunk.id)
   }
 
   return (

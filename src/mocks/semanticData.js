@@ -12,6 +12,7 @@
  * Article copy and domains are original placeholders.
  */
 import { buildPageVector, scoreChunks, summarizeChunks } from '../services/analysisPipeline'
+import { generateMockDeepAnalysis } from '../services/deepAnalysisService'
 import { chunkText, normalizeVector } from '../utils/vectorMath'
 
 const DIMENSIONS = 64
@@ -185,7 +186,7 @@ function buildAccountantAnalysis() {
     ),
   }))
 
-  return {
+  const baseResult = {
     id: 'mock-analysis-accountant-uk',
     createdAt: '2026-09-11T12:00:00.000Z',
     targetKeyword: mockAnalysisFormDefaults.keyword,
@@ -210,50 +211,14 @@ function buildAccountantAnalysis() {
       keywordEmbedding,
     }),
     competitors,
-    deepAnalysis: {
-      executiveSummary:
-        'The article outlines the main routes into accountancy but rarely ties them to concrete entry requirements: it never states the UCAS tariff points expected for degree routes, or how long each qualification path takes (the ACA, for example, usually runs three to five years). The recruitment journey stops at "apply to a firm" and skips the online psychometric tests and assessment centres most UK employers use. Coverage is also England-centric — ICAEW is named, while ICAS, essential for readers in Scotland, is missing.',
-      toneAndReadability:
-        'Friendly, informative tone that suits school leavers and first-year students (roughly a Grade 10–12 reading level). Long paragraphs would scan better as shorter sections, bullet lists and a comparison table.',
-      missingEntities: [
-        'ICAS (Institute of Chartered Accountants of Scotland)',
-        'UCAS tariff points',
-        'T-Levels in Finance',
-        'Numerical reasoning tests',
-        'Assessment centres',
-        'Situational judgement tests',
-        'Level 7 accountancy apprenticeship',
-        'L3/L4 assistant accountant apprenticeship',
-      ],
-      suggestions: [
-        {
-          id: 'suggestion-1',
-          type: 'addition',
-          priority: 'high',
-          title: 'Cover ICAS alongside ICAEW',
-          description:
-            'Add a short section on ICAS so the guide serves readers across the whole UK, not only England and Wales.',
-        },
-        {
-          id: 'suggestion-2',
-          type: 'structure',
-          priority: 'medium',
-          title: 'Add a qualification comparison table',
-          description:
-            'Map ACA, ACCA, CIMA, CIPFA and AAT to typical duration, entry requirements (UCAS points or apprenticeship level) and the career direction each one leads to.',
-        },
-        {
-          id: 'suggestion-3',
-          type: 'revision',
-          priority: 'medium',
-          title: 'Expand the recruitment process',
-          description:
-            'Describe the multi-stage application most UK firms run — online numerical and situational judgement tests, video interviews and assessment centres.',
-        },
-      ],
-    },
+    deepAnalysis: null,
     embeddingMode: 'mock',
   }
+
+  // Generate deep analysis using the service for consistency
+  baseResult.deepAnalysis = generateMockDeepAnalysis(baseResult)
+
+  return baseResult
 }
 
 /** @type {import('../types/models').AnalysisResult} */

@@ -2,6 +2,7 @@ import { parseHeadingLine } from '../utils/headings'
 import { classifyRelevanceZone } from '../utils/relevanceZones'
 import { chunkText, cosineSimilarity, meanVector, splitSentences } from '../utils/vectorMath'
 import { semanticChunks } from './semanticChunking'
+import { generateMockDeepAnalysis } from './deepAnalysisService'
 
 /** @typedef {import('../types/models').Chunk} Chunk */
 /** @typedef {import('../types/models').PageVector} PageVector */
@@ -230,7 +231,7 @@ export async function analyzeContent({
       ),
   }))
 
-  return {
+  const result = {
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     targetKeyword,
@@ -246,4 +247,12 @@ export async function analyzeContent({
     deepAnalysis: null,
     embeddingMode: provider.id,
   }
+
+  // Generate deep analysis
+  if (provider.id === 'mock') {
+    result.deepAnalysis = generateMockDeepAnalysis(result)
+  }
+  // Note: Real LLM integration (generateLLMDeepAnalysis) is a placeholder for future implementation
+
+  return result
 }
