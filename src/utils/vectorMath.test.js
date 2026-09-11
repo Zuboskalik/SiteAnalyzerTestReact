@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chunkText, cosineSimilarity, meanVector, normalizeVector } from './vectorMath'
+import { chunkText, cosineSimilarity, meanVector, normalizeVector, splitParagraphs, splitSentences } from './vectorMath'
 
 describe('cosineSimilarity', () => {
   it('returns 1 for identical vectors', () => {
@@ -127,5 +127,38 @@ describe('chunkText', () => {
   it('validates its input', () => {
     expect(() => chunkText(null)).toThrow(TypeError)
     expect(() => chunkText('text', { minChunkLength: 500, maxChunkLength: 100 })).toThrow(RangeError)
+  })
+})
+
+describe('splitParagraphs', () => {
+  it('returns trimmed blank-line separated spans', () => {
+    const text = '  First\n\n\n Second  '
+    expect(splitParagraphs(text).map(({ start, end }) => text.slice(start, end))).toEqual(['First', 'Second'])
+  })
+})
+
+describe('splitSentences', () => {
+  it('splits paragraphs into sentences with exact offsets, keeping headings as units', () => {
+    const text = 'Overview\n\nFirst sentence here. Second one follows! Third?\n\nNew paragraph.'
+    const sentences = splitSentences(text)
+
+    expect(sentences.map((sentence) => sentence.text)).toEqual([
+      'Overview',
+      'First sentence here.',
+      'Second one follows!',
+      'Third?',
+      'New paragraph.',
+    ])
+    for (const sentence of sentences) {
+      expect(text.slice(sentence.charStart, sentence.charEnd)).toBe(sentence.text)
+    }
+  })
+
+  it('hard-splits sentences longer than maxSentenceLength', () => {
+    const text = Array.from({ length: 40 }, (_, i) => `word${i}`).join(' ')
+    const sentences = splitSentences(text, { maxSentenceLength: 50 })
+
+    expect(sentences.length).toBeGreaterThan(1)
+    for (const sentence of sentences) expect(sentence.text.length).toBeLessThanOrEqual(50)
   })
 })

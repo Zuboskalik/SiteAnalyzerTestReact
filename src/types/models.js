@@ -80,15 +80,27 @@
  * @property {string} websiteNiche
  */
 
+/** @typedef {'complete_article'|'specific_section'} ContentScope */
+
+/** @typedef {'layout'|'semantic'} ChunkingStrategy */
+
+/**
+ * @typedef {Object} AnalysisOptions
+ * @property {ContentScope} contentScope
+ * @property {string|null} sectionHeading   Heading the analysis was limited to (specific_section only).
+ * @property {ChunkingStrategy} chunkingStrategy
+ */
+
 /**
  * @typedef {Object} AnalysisResult
  * @property {string} id
  * @property {string} createdAt             ISO date.
  * @property {string} targetKeyword
  * @property {number[]} keywordEmbedding
- * @property {{ type: 'url'|'text', value: string }} inputSource
+ * @property {{ type: 'url'|'text', value: string }} inputSource  `value` is the URL, or '' for pasted text.
  * @property {AnalysisMeta} meta
- * @property {string} sourceText            Full analyzed text; chunk offsets point into it.
+ * @property {AnalysisOptions} options
+ * @property {string} sourceText            Analyzed text (only the chosen section for specific_section); chunk offsets point into it.
  * @property {Chunk[]} chunks
  * @property {AnalysisSummary} summary
  * @property {PageVector} targetPage

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { classifyRelevanceZone } from '../utils/relevanceZones'
-import { cosineSimilarity } from '../utils/vectorMath'
+import { cosineSimilarity, splitSentences } from '../utils/vectorMath'
 import { analyzeContent, detectHeading, summarizeChunks } from './analysisPipeline'
 import { createMockEmbeddingProvider } from './embeddings/mockEmbeddingProvider'
 
@@ -131,5 +131,33 @@ describe('summarizeChunks', () => {
     expect(summary.cohesion).toBe(1)
     expect(summary.chunksNeedingOptimization).toBe(2)
     expect(summary.zoneCounts).toEqual({ highly_relevant: 1, broad_match: 1, noise: 1 })
+  })
+})
+
+describe('analyzeContent options', () => {
+  it('records layout chunking and the complete-article scope by default', async () => {
+    const { options } = await analyzeContent(baseInput())
+    expect(options).toEqual({ contentScope: 'complete_article', sectionHeading: null, chunkingStrategy: 'layout' })
+  })
+
+  it('groups sentence embeddings into chunks with semantic chunking, in one embed call', async () => {
+    const provider = createMockEmbeddingProvider()
+    const embed = vi.spyOn(provider, 'embed')
+
+    const result = await analyzeContent({
+      ...baseInput(),
+      provider,
+      chunking: { strategy: 'semantic', minChunkLength: 20 },
+      scope: { contentScope: 'specific_section', sectionHeading: 'Routes' },
+    })
+
+    expect(result.options).toEqual({ contentScope: 'specific_section', sectionHeading: 'Routes', chunkingStrategy: 'semantic' })
+    expect(embed).toHaveBeenCalledTimes(1)
+    expect(embed.mock.calls[0][0]).toHaveLength(1 + splitSentences(SOURCE_TEXT).length)
+    expect(result.chunks.length).toBeGreaterThan(0)
+    for (const chunk of result.chunks) {
+      expect(result.sourceText.slice(chunk.charStart, chunk.charEnd)).toBe(chunk.text)
+      expect(chunk.similarity).toBe(cosineSimilarity(chunk.embedding, result.keywordEmbedding))
+    }
   })
 })

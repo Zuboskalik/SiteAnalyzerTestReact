@@ -22,9 +22,9 @@ export function AppShell({ settings, children }) {
             <Radar className="size-5" aria-hidden="true" />
           </div>
           <div className="min-w-0">
-            <p className="truncate text-base font-semibold leading-tight">
+            <h1 className="truncate text-base font-semibold leading-tight">
               Semantic <span className="text-violet-600">Relevance</span> &amp; Space Analyzer
-            </p>
+            </h1>
             <p className="truncate text-xs text-muted-foreground">Passage-level relevance and vector-space mapping</p>
           </div>
           <span

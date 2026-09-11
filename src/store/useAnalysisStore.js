@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { mockAnalysisResult } from '../mocks/semanticData'
+import { runAnalysisRequest } from '../services/analysisRunner'
 import { useSettingsStore } from './useSettingsStore'
 
 /** @typedef {'idle'|'running'|'success'|'error'} AnalysisStatus */
@@ -15,9 +16,25 @@ export const useAnalysisStore = create((set) => ({
   error: /** @type {Error|null} */ (null),
   highlightedChunkId: /** @type {string|null} */ (null),
 
-  startAnalysis: () => set({ status: 'running', stage: null, error: null }),
-  setStage: (stage) => set({ stage }),
+  /**
+   * Runs with the embedding mode and key selected in Settings. On failure the
+   * previous result stays on screen and the error is exposed for the form.
+   * @param {import('../services/analysisRunner').AnalysisRequest} request
+   */
+  runAnalysis: async (request) => {
+    const { embeddingMode, openaiApiKey } = useSettingsStore.getState()
+    set({ status: 'running', stage: null, error: null })
+    try {
+      const analysisResult = await runAnalysisRequest(request, {
+        mode: embeddingMode,
+        openaiApiKey,
+        onStage: (stage) => set({ stage }),
+      })
+      set({ analysisResult, status: 'success', stage: null, highlightedChunkId: null })
+    } catch (error) {
+      set({ status: 'error', stage: null, error })
+    }
+  },
   setResult: (analysisResult) => set({ analysisResult, status: 'success', stage: null, highlightedChunkId: null }),
-  setError: (error) => set({ status: 'error', stage: null, error }),
   setHighlightedChunkId: (highlightedChunkId) => set({ highlightedChunkId }),
 }))

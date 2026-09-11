@@ -1,5 +1,7 @@
+import { parseHeadingLine } from '../utils/headings'
 import { classifyRelevanceZone } from '../utils/relevanceZones'
-import { chunkText, cosineSimilarity, meanVector } from '../utils/vectorMath'
+import { chunkText, cosineSimilarity, meanVector, splitSentences } from '../utils/vectorMath'
+import { semanticChunks } from './semanticChunking'
 
 /** @typedef {import('../types/models').Chunk} Chunk */
 /** @typedef {import('../types/models').PageVector} PageVector */
@@ -8,32 +10,26 @@ import { chunkText, cosineSimilarity, meanVector } from '../utils/vectorMath'
 /** @typedef {import('../types/models').BlockType} BlockType */
 /** @typedef {import('./embeddings/EmbeddingProvider').EmbeddingProvider} EmbeddingProvider */
 
-/** @typedef {'chunking'|'embedding'|'scoring'|'aggregating'} PipelineStage */
-
-const MARKDOWN_HEADING = /^(#{1,6})\s+(.+)$/
-const MAX_HEADING_LENGTH = 80
+/** @typedef {'fetching'|'chunking'|'embedding'|'scoring'|'aggregating'} PipelineStage */
 
 /**
- * Headings come either from markdown (`## Title`) or from layout: a short
- * first line, not ending in a full stop, followed by a blank line.
+ * @typedef {import('../utils/vectorMath').ChunkingOptions & { strategy?: import('../types/models').ChunkingStrategy }} PipelineChunkingOptions
+ */
+
+/**
+ * A chunk opens with a heading when its first line is a markdown heading, or a
+ * heading-like line (see parseHeadingLine) followed by a blank line.
  * @param {string} text
  * @returns {{ heading: string|null, blockType: BlockType }}
  */
 export function detectHeading(text) {
   const lines = text.split(/\r?\n/)
-  const firstLine = lines[0].trim()
-
-  const markdown = firstLine.match(MARKDOWN_HEADING)
-  if (markdown) return { heading: markdown[2].trim(), blockType: `h${markdown[1].length}` }
-
-  const isLayoutHeading =
-    lines.length > 2 &&
-    lines[1].trim() === '' &&
-    firstLine.length <= MAX_HEADING_LENGTH &&
-    !firstLine.endsWith('.')
-
-  // Plain text carries no heading level; section headings (h2) are the common case.
-  return isLayoutHeading ? { heading: firstLine, blockType: 'h2' } : { heading: null, blockType: 'paragraph' }
+  const parsed = parseHeadingLine(lines[0])
+  const followedByBlankLine = lines.length > 2 && lines[1].trim() === ''
+  if (parsed && (parsed.isMarkdown || followedByBlankLine)) {
+    return { heading: parsed.heading, blockType: parsed.blockType }
+  }
+  return { heading: null, blockType: 'paragraph' }
 }
 
 function fallbackLabel(index, total) {
@@ -128,16 +124,20 @@ export function summarizeChunks(chunks) {
 /**
  * chunk → embed → cosine similarity → AnalysisResult. Every text goes to the
  * provider in a single `embed` call, so remote providers see one request.
+ * Layout chunking embeds whole chunks; semantic chunking embeds sentences,
+ * groups them where the meaning shifts and averages each group's vectors.
  *
  * @param {Object} input
  * @param {string} input.keyword
  * @param {string} input.sourceText
  * @param {{ type: 'url'|'text', value: string }} input.inputSource
  * @param {import('../types/models').AnalysisMeta} [input.meta]
+ * @param {{ contentScope: import('../types/models').ContentScope, sectionHeading: string|null }} [input.scope]
+ *   How `sourceText` was selected; recorded on the result.
  * @param {CompetitorInput[]} [input.competitors]
  * @param {EmbeddingProvider} input.provider
- * @param {import('../utils/vectorMath').ChunkingOptions} [input.chunking]
- * @param {(stage: PipelineStage) => void} [input.onStage]
+ * @param {PipelineChunkingOptions} [input.chunking]
+ * @param {(stage: PipelineStage) => void | Promise<void>} [input.onStage]
  * @returns {Promise<AnalysisResult>}
  */
 export async function analyzeContent({
@@ -145,26 +145,29 @@ export async function analyzeContent({
   sourceText,
   inputSource,
   meta = { targetAudience: '', contentPurpose: '', websiteNiche: '' },
+  scope = { contentScope: 'complete_article', sectionHeading: null },
   competitors = [],
   provider,
-  chunking,
+  chunking = {},
   onStage,
 }) {
   const targetKeyword = keyword?.trim()
   if (!targetKeyword) throw new Error('Target keyword is required.')
+  const strategy = chunking.strategy ?? 'layout'
 
-  onStage?.('chunking')
-  const rawChunks = chunkText(sourceText ?? '', chunking)
-  if (rawChunks.length === 0) throw new Error('The source content is empty — there is nothing to analyze.')
+  await onStage?.('chunking')
+  const units =
+    strategy === 'semantic' ? splitSentences(sourceText ?? '', chunking) : chunkText(sourceText ?? '', chunking)
+  if (units.length === 0) throw new Error('The source content is empty — there is nothing to analyze.')
 
   const competitorPages = competitors
     .flatMap((site) => site.pages.map((page) => ({ site, page, chunks: chunkText(page.text ?? '', chunking) })))
     .filter((entry) => entry.chunks.length > 0)
 
-  onStage?.('embedding')
+  await onStage?.('embedding')
   const texts = [
     targetKeyword,
-    ...rawChunks.map((chunk) => chunk.text),
+    ...units.map((unit) => unit.text),
     ...competitorPages.flatMap((entry) => entry.chunks.map((chunk) => chunk.text)),
   ]
   const vectors = await provider.embed(texts)
@@ -172,7 +175,7 @@ export async function analyzeContent({
     throw new Error(`Embedding provider returned ${vectors.length} vectors for ${texts.length} texts.`)
   }
 
-  onStage?.('scoring')
+  await onStage?.('scoring')
   const keywordEmbedding = vectors[0]
   let cursor = 1
   const takeVectors = (count) => {
@@ -180,13 +183,22 @@ export async function analyzeContent({
     cursor += count
     return taken
   }
-  const chunks = scoreChunks(rawChunks, takeVectors(rawChunks.length), keywordEmbedding)
+
+  const unitVectors = takeVectors(units.length)
+  let rawChunks = units
+  let chunkVectors = unitVectors
+  if (strategy === 'semantic') {
+    const grouped = semanticChunks(sourceText, units, unitVectors, chunking)
+    rawChunks = grouped.chunks
+    chunkVectors = grouped.embeddings
+  }
+  const chunks = scoreChunks(rawChunks, chunkVectors, keywordEmbedding)
   const embeddedCompetitorPages = competitorPages.map((entry) => ({
     ...entry,
     embeddings: takeVectors(entry.chunks.length),
   }))
 
-  onStage?.('aggregating')
+  await onStage?.('aggregating')
   const targetUrl = inputSource.type === 'url' ? inputSource.value : null
   const targetPage = buildPageVector({
     id: 'target-page',
@@ -225,6 +237,7 @@ export async function analyzeContent({
     keywordEmbedding,
     inputSource,
     meta,
+    options: { ...scope, chunkingStrategy: strategy },
     sourceText,
     chunks,
     summary: summarizeChunks(chunks),

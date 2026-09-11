@@ -46,11 +46,14 @@ export const mockAnalysisFormDefaults = {
   keyword: 'how to become an accountant in the uk',
   sourceType: 'url',
   url: 'https://careers.example.co.uk/careers-advice/how-to-become/accountant',
+  text: '',
   targetAudience: 'students looking to join career in accountancy',
   contentPurpose: 'informative and commercial',
   websiteNiche: 'third-party education website',
   contentScope: 'complete_article',
-  vectorAlgorithm: 'layout_based',
+  sectionHeading: '',
+  chunkingStrategy: 'layout',
+  competitorUrls: [],
 }
 
 // One entry per chunk: every paragraph is 80–600 chars, so the default
@@ -193,6 +196,7 @@ function buildAccountantAnalysis() {
       contentPurpose: mockAnalysisFormDefaults.contentPurpose,
       websiteNiche: mockAnalysisFormDefaults.websiteNiche,
     },
+    options: { contentScope: 'complete_article', sectionHeading: null, chunkingStrategy: 'layout' },
     sourceText,
     chunks,
     summary: summarizeChunks(chunks),

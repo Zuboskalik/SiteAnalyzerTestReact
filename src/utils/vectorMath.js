@@ -128,6 +128,29 @@ function mergeShortSpans(spans, minLength) {
 }
 
 /**
+ * @param {string} text
+ * @returns {Span[]} Blank-line separated paragraphs, trimmed.
+ */
+export function splitParagraphs(text) {
+  return splitSpanAt(text, { start: 0, end: text.length }, PARAGRAPH_BREAK)
+}
+
+/**
+ * Sentence units for semantic chunking; a heading paragraph is a unit of its own.
+ * @param {string} text
+ * @param {{ maxSentenceLength?: number }} [options]
+ * @returns {{ text: string, charStart: number, charEnd: number }[]}
+ */
+export function splitSentences(text, { maxSentenceLength = 600 } = {}) {
+  return splitParagraphs(text)
+    .flatMap((paragraph) => splitSpanAt(text, paragraph, SENTENCE_END))
+    .flatMap((sentence) =>
+      spanLength(sentence) > maxSentenceLength ? hardSplit(text, sentence, maxSentenceLength) : [sentence],
+    )
+    .map(({ start, end }) => ({ text: text.slice(start, end), charStart: start, charEnd: end }))
+}
+
+/**
  * @typedef {Object} ChunkingOptions
  * @property {number} [maxChunkLength=600] Paragraphs longer than this (chars) are split at sentence boundaries.
  * @property {number} [minChunkLength=80]  Spans shorter than this are merged into a neighbour.
@@ -148,7 +171,7 @@ export function chunkText(text, { maxChunkLength = 600, minChunkLength = 80 } = 
     throw new RangeError('chunkText: minChunkLength must not exceed maxChunkLength')
   }
 
-  const paragraphs = splitSpanAt(text, { start: 0, end: text.length }, PARAGRAPH_BREAK)
+  const paragraphs = splitParagraphs(text)
   const spans = mergeShortSpans(
     paragraphs.flatMap((paragraph) => splitLongSpan(text, paragraph, maxChunkLength)),
     minChunkLength,

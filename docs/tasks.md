@@ -24,6 +24,21 @@
 - `tetherThreshold` по умолчанию **0.75** (скриншот: «Tether ≥ 7.5» по шкале 0–10).
 - `npm audit`: 4 high-уязвимости в `onnxruntime-node` и `sharp` — это Node-only зависимости `@huggingface/transformers`, в браузерный бандл они не входят; исправления в upstream пока нет.
 
+## Отклонения от плана (Phase 3)
+
+- **Оркестрация запуска** вынесена в `src/services/analysisRunner.js`: загрузка контента → вырезка раздела → `analyzeContent`, плюс стадии для панели «Computing vectors». В стор добавлен экшен `runAnalysis(request)`. Форма вызывает его, а не `analysisPipeline` напрямую.
+- **Загрузка URL из браузера** (`src/services/pageFetcher.js`): HTML превращается в текст с markdown-заголовками, чтобы сохранялись уровни H1–H6. Сайты без CORS загрузить не получится — пользователь видит понятную ошибку с советом использовать вкладку Text. Серверный прокси остаётся вне рамок (см. `docs/plan.md` §4).
+- **Demo-режим не обращается к сети:**
+  - любой URL загружает образец статьи, URL конкурентов получают заглушки по slug;
+  - эталонный сценарий из видео (keyword + URL, Complete article, Layout) возвращает курируемый `mockAnalysisResult`;
+  - шаги прогресса идут с паузой 450 мс, чтобы их было видно.
+- **Новые опции формы** записываются в `AnalysisResult.options`:
+  - **Content scope**: `complete_article` / `specific_section`. Раздел вырезается по заголовку вместе с вложенными подразделами (`src/utils/contentScope.js`);
+  - **Vector algorithm**: `layout` / `semantic` (`src/services/semanticChunking.js`). Предложения эмбеддятся, чанк разрывается на самых больших расстояниях между соседями (верхняя четверть) или по лимиту длины; заголовок всегда остаётся со следующим за ним текстом.
+- **Target Audience / Content Purpose / Website Niche** — Select с пресетами и пунктом «Custom…» для свободного текста: спецификация допускает оба варианта.
+- **Переключатель режима эмбеддингов** — radio group из карточек с описанием режима вместо Tabs/Select.
+- Добавлены shadcn-примитивы `input`, `textarea`, `label`, `select`, `tabs`, `radio-group` и dev-зависимость `jsdom` для тестов парсинга HTML.
+
 ---
 
 ## Phase 1 — Инициализация проекта, Tailwind, базовый Layout и Mock-данные
@@ -136,31 +151,55 @@
 
 ## Phase 3 — Компоненты ввода данных и конфигурации анализа
 
-- [ ] **P3-1. Каркас `AnalysisForm.jsx`**
-  Файлы: `src/components/config/AnalysisForm.jsx`.
+- [x] **P3-1. Каркас `AnalysisForm.jsx`**
+  Файлы: `src/components/config/AnalysisForm.jsx`, `src/components/config/PresetSelect.jsx`.
   DoD: Форма рендерит все поля из п. 3.1 спецификации (Target Keyword, переключатель URL/Текст, Target Audience, Content Purpose, Website Niche); форма встроена в `AppShell` и видна в браузере.
+  Проверено: блок «Analysis configuration» в слоте настроек `AppShell` содержит:
+  - поля Target keyword и URL / Text;
+  - три селектора с пресетами и «Custom…»;
+  - Content scope (Complete article / Specific section) и Vector algorithm (Layout-based / Semantic AI Chunking);
+  - список конкурентов и кнопку «Run Semantic Analysis».
 
-- [ ] **P3-2. Переключатель источника контента URL / Текст**
+  Демо-значения из видео подставляются по умолчанию.
+
+- [x] **P3-2. Переключатель источника контента URL / Текст**
   DoD: При выборе «URL» отображается текстовое поле для ссылки, при выборе «Текст» — textarea; переключение скрывает/очищает неиспользуемое поле; проверено кликом в браузере.
+  Проверено в браузере: при выборе Text поле URL исчезает, появляется textarea со счётчиком символов. Введённое значение сохраняется при переключении туда-обратно, но в запрос уходит только активный источник (`buildAnalysisRequest`, покрыто тестом). Для URL есть кнопка Fetch: она показывает «Ready: N chars indexed» или ошибку загрузки.
 
-- [ ] **P3-3. Валидация обязательных полей**
+- [x] **P3-3. Валидация обязательных полей**
+  Файлы: `src/components/config/validateAnalysisForm.js` (+ тест).
   DoD: Попытка отправки формы с пустым Target Keyword или пустым источником контента блокируется, под соответствующим полем отображается текст ошибки; форма с валидными данными отправляется без ошибок.
+  Проверки: keyword; URL (только http/https); текст ≥50 символов; заголовок для Specific section; URL конкурентов; ключ в режиме OpenAI. Проверено в браузере: пустой keyword и `example.com/page` блокируют отправку, ошибки выводятся под полями (`aria-invalid` + `aria-describedby`), фокус переходит на первое невалидное поле. После первой попытки ошибки пересчитываются по мере ввода.
 
-- [ ] **P3-4. Динамический список конкурентов**
+- [x] **P3-4. Динамический список конкурентов**
   DoD: Пользователь может добавить/удалить произвольное количество строк URL конкурентов (кнопки «Добавить»/«Удалить»); пустые строки конкурентов не попадают в итоговый payload при отправке.
+  Проверено в браузере: добавлено 3 строки, третья удалена, одна строка оставлена пустой — в анализ попала 1 страница конкурента. Лимит — 10 строк. Отбрасывание пустых строк покрыто тестом `buildAnalysisRequest`.
 
-- [ ] **P3-5. `SettingsPanel.jsx` — переключатель режима эмбеддингов**
+- [x] **P3-5. `SettingsPanel.jsx` — переключатель режима эмбеддингов**
   Файлы: `src/components/layout/SettingsPanel.jsx`.
   DoD: Компонент предоставляет выбор между Mock / Transformers.js / OpenAI (например, Shadcn `Tabs` или `Select`); выбор обновляет `useSettingsStore.embeddingMode`; текущий активный режим явно отображён в UI (текстовая метка или бейдж) — закрывает критерий п. 4.2 спецификации.
+  Проверено в браузере: radio group Demo / Local AI (Transformers.js) / OpenAI обновляет стор. Активный режим показан дважды: «Active: …» в панели и бейдж в шапке («Demo mode · mock data», «Transformers.js · local», «OpenAI embeddings»). Во время прогона переключатель заблокирован.
 
-- [ ] **P3-6. Поле ввода OpenAI API key**
+- [x] **P3-6. Поле ввода OpenAI API key**
   DoD: Поле типа `password` отображается только при выборе режима OpenAI; значение хранится исключительно в памяти стора (`useSettingsStore`), не сохраняется в `localStorage`/`sessionStorage` и не попадает в URL — проверено вручную (DevTools → Application → Storage пуст после ввода ключа).
+  Проверено в браузере: поле `type="password"` появляется только в режиме OpenAI и скрывается при возврате в Demo. После ввода ключа `localStorage` и `sessionStorage` пусты (0 записей), cookie пусты, ключа нет в URL.
 
-- [ ] **P3-7. Связка `AnalysisForm` → `analysisPipeline` → `useAnalysisStore`**
+- [x] **P3-7. Связка `AnalysisForm` → `analysisPipeline` → `useAnalysisStore`**
   DoD: Отправка формы с валидными данными вызывает `analysisPipeline` с выбранным в `SettingsPanel` провайдером и записывает результат в `useAnalysisStore.analysisResult`; проверено вручную для режима Mock (P2-5) — после сабмита стор содержит новый `AnalysisResult`, соответствующий введённым данным формы.
+  Путь запуска: форма → `useAnalysisStore.runAnalysis` → `runAnalysisRequest` (провайдер из настроек) → `analyzeContent` → `analysisResult` (см. «Отклонения от плана (Phase 3)»). Проверено в браузере:
+  - Demo, эталон из видео → 52.7% / 58 IDX / 9 chunks;
+  - Demo, Text + Specific section «Accountancy apprenticeships» + Semantic AI Chunking → 2 чанка и 1 страница конкурента, опции отражены в обзоре;
+  - Transformers.js на вставленном тексте → «Transformers.js vectors», 3 чанка.
 
-- [ ] **P3-8. Индикация состояния загрузки и ошибок анализа**
+  Покрыто тестами `analysisRunner.test.js` и `useAnalysisStore.test.js`.
+
+- [x] **P3-8. Индикация состояния загрузки и ошибок анализа**
+  Файлы: `src/components/config/AnalysisProgress.jsx`.
   DoD: Во время выполнения `analysisPipeline` в UI отображается индикатор загрузки (spinner/skeleton); при выбросе ошибки (например, невалидный OpenAI-ключ из P2-7) пользователю показывается читаемое сообщение об ошибке вместо «зависшего» состояния формы.
+  Проверено в браузере:
+  - во время прогона кнопка показывает спиннер и «Analyzing content…», форма заблокирована (`fieldset disabled`);
+  - панель «Computing vectors» проходит 5 шагов, от Fetching content до Aggregating results;
+  - при ошибке появляется alert «Analysis failed» с текстом, а прежний результат остаётся на экране. Проверено на недоступном URL в режиме Transformers.js (сообщение про CORS). Отсутствующий ключ OpenAI ловится ещё до запуска.
 
 ---
 

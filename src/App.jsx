@@ -1,5 +1,8 @@
 import { RotateCcw, SlidersHorizontal } from 'lucide-react'
+import { AnalysisForm } from '@/components/config/AnalysisForm'
+import { AnalysisProgress } from '@/components/config/AnalysisProgress'
 import { AppShell } from '@/components/layout/AppShell'
+import { SettingsPanel } from '@/components/layout/SettingsPanel'
 import { Button } from '@/components/ui/button'
 import { mockAnalysisResult } from '@/mocks/semanticData'
 import { useAnalysisStore } from '@/store/useAnalysisStore'
@@ -11,7 +14,11 @@ const ZONE_DOTS = {
   noise: 'bg-rose-500',
 }
 
+const CHUNKING_LABELS = { layout: 'Layout-based chunking', semantic: 'Semantic AI chunking' }
+const MODE_LABELS = { mock: 'Demo vectors', transformers: 'Transformers.js vectors', openai: 'OpenAI vectors' }
+
 const formatPercent = (ratio) => `${(ratio * 100).toFixed(1)}%`
+const plural = (count, noun) => `${count} ${noun}${count === 1 ? '' : 's'}`
 
 function StatTile({ label, value, hint }) {
   return (
@@ -23,28 +30,44 @@ function StatTile({ label, value, hint }) {
   )
 }
 
-function SettingsPlaceholder() {
+function AnalysisConfiguration() {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-dashed bg-white px-5 py-4 text-sm text-muted-foreground">
-      <SlidersHorizontal className="size-4 shrink-0" aria-hidden="true" />
-      Analysis configuration and embedding settings are added in Phase 3.
+    <div className="rounded-xl border bg-white shadow-xs">
+      <div className="flex items-center gap-2 border-b px-6 py-4">
+        <SlidersHorizontal className="size-4 text-violet-600" aria-hidden="true" />
+        <h2 className="text-xs font-semibold uppercase tracking-wider">Analysis configuration</h2>
+      </div>
+      <div className="grid gap-8 p-6 lg:grid-cols-[minmax(0,1fr)_17rem]">
+        <AnalysisForm />
+        <aside aria-label="Embedding settings" className="lg:border-l lg:pl-8">
+          <SettingsPanel />
+        </aside>
+      </div>
     </div>
   )
 }
 
 function AnalysisOverview({ result, onReloadDemo }) {
-  const { summary } = result
+  const { summary, options } = result
   const competitorPages = result.competitors.reduce((count, site) => count + site.pages.length, 0)
+  const source =
+    result.inputSource.type === 'url'
+      ? result.inputSource.value
+      : `Pasted text · ${result.sourceText.length.toLocaleString()} chars`
+  const scope = options.contentScope === 'specific_section' ? `Section: ${options.sectionHeading}` : 'Complete article'
 
   return (
     <section className="rounded-xl border bg-white p-6 shadow-xs" aria-labelledby="overview-title">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Query context</p>
-          <h1 id="overview-title" className="mt-1 font-mono text-lg break-words">
+          <h2 id="overview-title" className="mt-1 font-mono text-lg break-words">
             {result.targetKeyword}
-          </h1>
-          <p className="mt-1 truncate text-sm text-muted-foreground">{result.inputSource.value}</p>
+          </h2>
+          <p className="mt-1 truncate text-sm text-muted-foreground">{source}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {CHUNKING_LABELS[options.chunkingStrategy]} · {scope} · {MODE_LABELS[result.embeddingMode]}
+          </p>
         </div>
         <Button variant="outline" size="sm" onClick={onReloadDemo}>
           <RotateCcw aria-hidden="true" />
@@ -57,13 +80,13 @@ function AnalysisOverview({ result, onReloadDemo }) {
         <StatTile label="Overall cohesion" value={`${Math.round(summary.cohesion * 100)} IDX`} />
         <StatTile
           label="Optimization needed"
-          value={`${summary.chunksNeedingOptimization} chunks`}
+          value={plural(summary.chunksNeedingOptimization, 'chunk')}
           hint={`of ${result.chunks.length} analyzed`}
         />
         <StatTile
           label="Competitor pages"
           value={competitorPages}
-          hint={`across ${result.competitors.length} sites`}
+          hint={`across ${plural(result.competitors.length, 'site')}`}
         />
       </div>
 
@@ -83,19 +106,22 @@ function AnalysisOverview({ result, onReloadDemo }) {
 
 function App() {
   const analysisResult = useAnalysisStore((state) => state.analysisResult)
+  const status = useAnalysisStore((state) => state.status)
   const setResult = useAnalysisStore((state) => state.setResult)
 
-  return (
-    <AppShell settings={<SettingsPlaceholder />}>
-      {analysisResult ? (
-        <AnalysisOverview result={analysisResult} onReloadDemo={() => setResult(mockAnalysisResult)} />
-      ) : (
-        <section className="rounded-xl border bg-white p-10 text-center text-sm text-muted-foreground">
-          No analysis yet. Run one from the configuration panel.
-        </section>
-      )}
-    </AppShell>
-  )
+  let content
+  if (status === 'running') content = <AnalysisProgress />
+  else if (analysisResult) {
+    content = <AnalysisOverview result={analysisResult} onReloadDemo={() => setResult(mockAnalysisResult)} />
+  } else {
+    content = (
+      <section className="rounded-xl border bg-white p-10 text-center text-sm text-muted-foreground">
+        No analysis yet. Configure one above and run it.
+      </section>
+    )
+  }
+
+  return <AppShell settings={<AnalysisConfiguration />}>{content}</AppShell>
 }
 
 export default App
