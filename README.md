@@ -38,7 +38,7 @@
 ### 1. Клонирование репозитория
 
 ```bash
-git clone git@github.com:Zuboskalik/SiteAnalyzerTestReact.git
+git clone https://github.com/Zuboskalik/SiteAnalyzerTestReact.git
 cd SiteAnalyzerTestReact
 ```
 
