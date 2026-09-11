@@ -5,11 +5,11 @@
 export const HIGHLY_RELEVANT_ABOVE = 65
 export const BROAD_MATCH_FROM = 43
 
-/** @type {Record<RelevanceZone, { label: string, range: string }>} */
+/** @type {Record<RelevanceZone, { label: string, range: string, color: string, tint: string }>} */
 export const RELEVANCE_ZONES = {
-  highly_relevant: { label: 'Highly Relevant', range: '>65%' },
-  broad_match: { label: 'Broad Match', range: '43–64%' },
-  noise: { label: 'Noise', range: '0–42%' },
+  highly_relevant: { label: 'Highly Relevant', range: '>65%', color: '#10b981', tint: '#ecfdf5' },
+  broad_match: { label: 'Broad Match', range: '43–64%', color: '#f59e0b', tint: '#fffbeb' },
+  noise: { label: 'Noise', range: '0–42%', color: '#f43f5e', tint: '#fff1f2' },
 }
 
 /**

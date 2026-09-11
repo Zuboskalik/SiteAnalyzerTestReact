@@ -4,15 +4,12 @@ import { AnalysisProgress } from '@/components/config/AnalysisProgress'
 import { AppShell } from '@/components/layout/AppShell'
 import { SettingsPanel } from '@/components/layout/SettingsPanel'
 import { Button } from '@/components/ui/button'
+import { ComparisonVectorMap } from '@/components/visualizations/ComparisonVectorMap'
+import { ProximityRadar } from '@/components/visualizations/ProximityRadar'
+import { RelevanceChart } from '@/components/visualizations/RelevanceChart'
 import { mockAnalysisResult } from '@/mocks/semanticData'
 import { useAnalysisStore } from '@/store/useAnalysisStore'
 import { RELEVANCE_ZONES } from '@/utils/relevanceZones'
-
-const ZONE_DOTS = {
-  highly_relevant: 'bg-emerald-500',
-  broad_match: 'bg-amber-400',
-  noise: 'bg-rose-500',
-}
 
 const CHUNKING_LABELS = { layout: 'Layout-based chunking', semantic: 'Semantic AI chunking' }
 const MODE_LABELS = { mock: 'Demo vectors', transformers: 'Transformers.js vectors', openai: 'OpenAI vectors' }
@@ -91,9 +88,9 @@ function AnalysisOverview({ result, onReloadDemo }) {
       </div>
 
       <ul className="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-sm" aria-label="Chunks per relevance zone">
-        {Object.entries(RELEVANCE_ZONES).map(([zone, { label, range }]) => (
+        {Object.entries(RELEVANCE_ZONES).map(([zone, { label, range, color }]) => (
           <li key={zone} className="flex items-center gap-2">
-            <span className={`size-2.5 rounded-full ${ZONE_DOTS[zone]}`} aria-hidden="true" />
+            <span className="size-2.5 rounded-full" style={{ backgroundColor: color }} aria-hidden="true" />
             {label}
             <span className="text-muted-foreground">{range}</span>
             <strong className="tabular-nums">{summary.zoneCounts[zone]}</strong>
@@ -112,7 +109,16 @@ function App() {
   let content
   if (status === 'running') content = <AnalysisProgress />
   else if (analysisResult) {
-    content = <AnalysisOverview result={analysisResult} onReloadDemo={() => setResult(mockAnalysisResult)} />
+    content = (
+      <>
+        <AnalysisOverview result={analysisResult} onReloadDemo={() => setResult(mockAnalysisResult)} />
+        <div className="grid gap-6 lg:grid-cols-2">
+          <ProximityRadar />
+          <RelevanceChart />
+        </div>
+        <ComparisonVectorMap />
+      </>
+    )
   } else {
     content = (
       <section className="rounded-xl border bg-white p-10 text-center text-sm text-muted-foreground">

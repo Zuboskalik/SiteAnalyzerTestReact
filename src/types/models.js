@@ -129,7 +129,7 @@
  * @property {{ id: string, text: string, embedding: number[] }} keyword
  * @property {(CompetitorSite & { role: 'target'|'competitor' })[]} sites
  * @property {TopicCluster[]} clusters
- * @property {{ tetherThreshold: number, gapLimit: number, showKeywords: boolean, colorBy: 'site'|'cluster' }} settings
+ * @property {{ tetherThreshold: number, gapLimit: number, showKeywords: boolean, colorBy: 'site'|'cluster' }} [settings]
  *   `gapLimit` mirrors the reference UI's "Gap ≤" control (0–10 scale); its exact semantics are defined with the Comparison Map in Phase 5.
  */
 
