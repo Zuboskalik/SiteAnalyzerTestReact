@@ -4,15 +4,26 @@
 
 Формат ID: `P<фаза>-<номер>`.
 
+## Отклонения от плана
+
+По ходу реализации Phase 1–2 фактические пути разошлись с `docs/plan.md`; зафиксировано здесь, чтобы последующие задачи (в т.ч. P1-5, P1-9, P2-2, P2-9 ниже) ссылались на актуальное состояние:
+
+- **TailwindCSS v4** настроен через `@tailwindcss/vite` (плагин в `vite.config.js` + `@import "tailwindcss";` в `src/index.css`) — отдельных `tailwind.config.js`/`postcss.config.js` в этой версии Tailwind не требуется (DoD задачи P1-2 в части конфигов формально устарел, суть — применение utility-классов — выполнена и проверена в браузере).
+- `cosineSimilarity` и `chunkText` реализованы в одном файле **`src/utils/vectorMath.js`** (по прямому указанию пользователя), а не в раздельных `src/services/similarity/cosineSimilarity.js` / `src/services/chunking/chunkText.js` из плана.
+- Демо-данные реализованы в **`src/mocks/semanticData.js`** (по прямому указанию пользователя), а не в `src/services/mockData/fixtures.js`. Текущий мок покрывает структуру Comparison Map (Target Keyword + `targetSite` + `competitorSites`, счётчики `getComparisonMapStats`) и 7-чанковую выборку по одной странице (`mockAnalyzedPage`) — это **не** полноценный объект `AnalysisResult` (нет `deepAnalysis`, чанков <10), поэтому P1-9/P1-10 ниже остаются открытыми до Phase 6.
+- Классификация зон релевантности (`classifyRelevanceZone`) пока реализована как приватный helper внутри `src/mocks/semanticData.js`, а не как переиспользуемый модуль — P2-2 остаётся открытым.
+- Тестовый раннер (Vitest и т.п.) ещё не подключён; корректность `cosineSimilarity`/`chunkText`/согласованность моков проверена вручную через одноразовые Node-скрипты (не закоммичены) — P2-9 остаётся открытым.
+
 ---
 
 ## Phase 1 — Инициализация проекта, Tailwind, базовый Layout и Mock-данные
 
-- [ ] **P1-1. Инициализация Vite + React проекта**
+- [x] **P1-1. Инициализация Vite + React проекта**
   DoD: `npm run dev` поднимает dev-server, в браузере отображается стартовая страница React без ошибок в консоли.
 
-- [ ] **P1-2. Установка и настройка TailwindCSS**
-  DoD: `tailwind.config.js` и `postcss.config.js` созданы; утилитарный класс (например, `bg-slate-900`), применённый к тестовому элементу в `App.jsx`, визуально применяется в браузере.
+- [x] **P1-2. Установка и настройка TailwindCSS**
+  Файлы: `vite.config.js` (плагин `@tailwindcss/vite`), `src/index.css` (`@import "tailwindcss";`) — см. «Отклонения от плана».
+  DoD: Utility-классы Tailwind (например, `bg-slate-950`), применённые в `src/App.jsx`, визуально применяются в браузере (проверено через Browser preview).
 
 - [ ] **P1-3. Установка и инициализация Shadcn UI**
   DoD: `components.json` создан, хотя бы один сгенерированный примитив (`Button`) импортируется и рендерится в `App.jsx` без ошибок сборки.
@@ -37,8 +48,9 @@
   DoD: В файле присутствуют все `@typedef` из раздела 3 `docs/plan.md` (`Chunk`, `PageVector`, `CompetitorSite`, `DeepAnalysis`, `AnalysisResult`, `AppSettings`); файл импортируется без синтаксических ошибок (проверка через IDE/JSDoc-линтер или `tsc --checkJs` при наличии конфигурации).
 
 - [ ] **P1-9. Mock-данные, соответствующие схеме `AnalysisResult`**
-  Файлы: `src/services/mockData/fixtures.js`.
+  Файлы: `src/services/mockData/fixtures.js` → фактически частично реализовано в `src/mocks/semanticData.js` (см. «Отклонения от плана»).
   DoD: Экспортируется хотя бы один полный объект `AnalysisResult` (≥10 чанков с разбросом `similarity` по всем трём зонам релевантности, ≥1 конкурент с ≥2 страницами, заполненный `deepAnalysis`); объект структурно соответствует JSDoc-типам из P1-8 (проверка вручную по полям).
+  Текущий статус: `src/mocks/semanticData.js` уже даёт `mockTargetKeyword`, `mockTargetSite` (13 страниц), `mockCompetitorSites` (1 конкурент, 14 страниц) и `mockAnalyzedPage` (7 чанков, все 3 зоны релевантности представлены, офсеты и similarity проверены вручную) — закрывает данные для Comparison Map (Phase 5) и частично для Relevance Dashboard/Proximity Map (Phase 4). Не хватает: ≥10 чанков и блока `deepAnalysis` для полного соответствия DoD — доделать при реализации Phase 6.
 
 - [ ] **P1-10. Загрузка mock-данных в `useAnalysisStore` по умолчанию в demo-режиме**
   DoD: При старте приложения с `embeddingMode: 'mock'` в `useAnalysisStore.analysisResult` автоматически подставляются данные из P1-9; в React DevTools видно заполненное состояние стора сразу после загрузки страницы.
@@ -47,17 +59,18 @@
 
 ## Phase 2 — Математический модуль (Chunking, Cosine Similarity, Embeddings Service)
 
-- [ ] **P2-1. Утилита `cosineSimilarity`**
-  Файлы: `src/services/similarity/cosineSimilarity.js`.
-  DoD: Функция принимает два числовых массива одинаковой длины и возвращает число в диапазоне `[-1, 1]`; для идентичных векторов возвращает `1`, для ортогональных — `0`; покрыта unit-тестами (см. P2-9).
+- [x] **P2-1. Утилита `cosineSimilarity`**
+  Файлы: `src/utils/vectorMath.js` (см. «Отклонения от плана» — объединена с `chunkText` по указанию пользователя).
+  DoD: Функция принимает два числовых массива одинаковой длины и возвращает число в диапазоне `[-1, 1]`; для идентичных векторов возвращает `1`, для ортогональных — `0`; при несовпадении длины бросает ошибку. Проверено вручную (Node-скрипт): identical=1, orthogonal=0, zero-vector=0, mismatched length → throw. Формальные unit-тесты — см. P2-9 (открыт).
 
 - [ ] **P2-2. Утилита классификации зон релевантности**
   Файлы: `src/utils/relevanceZones.js`.
   DoD: Функция принимает `similarity` (0–1 или 0–100%) и возвращает `'highly_relevant' | 'broad_match' | 'noise'` строго по порогам из п. 3.4 спецификации (>65%, 43–64%, 0–42%); граничные значения (43%, 65%) проверены тестом.
+  Примечание: реализация уже существует как приватный helper `classifyRelevanceZone` в `src/mocks/semanticData.js` — требуется вынести в переиспользуемый `src/utils/relevanceZones.js`.
 
-- [ ] **P2-3. Утилита `chunkText`**
-  Файлы: `src/services/chunking/chunkText.js`.
-  DoD: Функция принимает сырой текст и параметры стратегии (например, максимальная длина чанка), возвращает массив объектов вида `{ text, index, charStart, charEnd }`, где `charStart`/`charEnd` корректно указывают на позицию фрагмента в исходной строке (проверка: `text.slice(charStart, charEnd) === chunk.text`).
+- [x] **P2-3. Утилита `chunkText`**
+  Файлы: `src/utils/vectorMath.js` (см. «Отклонения от плана»).
+  DoD: Функция принимает сырой текст и параметры стратегии (`maxChunkLength`, `minChunkLength`), возвращает массив объектов вида `{ text, index, charStart, charEnd }`, где `charStart`/`charEnd` корректно указывают на позицию фрагмента в исходной строке. Стратегия: разбиение по абзацам (пустая строка), с дроблением слишком длинных абзацев по границам предложений и укрупнением коротких хвостов. Проверено вручную (Node-скрипт) на многоабзацном тексте: все офсеты точны (`text.slice(charStart, charEnd) === chunk.text`), пустой текст → `[]`.
 
 - [ ] **P2-4. Контракт `EmbeddingProvider`**
   Файлы: `src/services/embeddings/EmbeddingProvider.js`.
